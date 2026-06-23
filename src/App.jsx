@@ -225,10 +225,12 @@ export default function App(){
   const [passInput,setPassInput] = useState("");
   const [passErr,setPassErr] = useState("");
   const [passBusy,setPassBusy] = useState(false);
+  const [syncState,setSyncState] = useState("synced"); // "synced" | "saving" | "offline"
   const revRef   = useRef(0);      // last server revision we hold
   const dirtyRef = useRef(false);  // local edits not yet pushed
   const saveTimer= useRef(null);
   const skipPush = useRef(false);  // next data change came from server, don't echo it back
+  const dataRef  = useRef(data);   // latest data for background retries
 
   // Initial load from server once authed (uses stored passcode).
   useEffect(()=>{
@@ -250,28 +252,38 @@ export default function App(){
 
   // Persist locally + debounced push to server.
   useEffect(()=>{
+    dataRef.current=data;
     save(data); // local cache write-through (offline + instant paint)
     if(!authed||!synced) return;
     if(skipPush.current){ skipPush.current=false; return; } // adopted from server, don't echo back
     dirtyRef.current=true;
+    setSyncState("saving");
     clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(()=>{
       const pass=localStorage.getItem(PASS_KEY)||"";
-      apiPost(pass,data).then(res=>{ revRef.current=res.rev; dirtyRef.current=false; }).catch(()=>{});
+      apiPost(pass,data)
+        .then(res=>{ revRef.current=res.rev; dirtyRef.current=false; setSyncState("synced"); })
+        .catch(()=>{ setSyncState("offline"); }); // poll loop will retry
     },700);
     return ()=>clearTimeout(saveTimer.current);
   },[data,authed,synced]);
 
-  // Poll for edits from other devices (skip while we have unsaved local changes).
+  // Poll loop: retry unsaved local changes if any, otherwise pull others' edits.
   useEffect(()=>{
     if(!authed||!synced) return;
     const id=setInterval(()=>{
-      if(dirtyRef.current) return;
       const pass=localStorage.getItem(PASS_KEY)||"";
+      if(dirtyRef.current){ // a save is still pending (e.g. earlier push failed) — retry, don't pull
+        apiPost(pass,dataRef.current)
+          .then(res=>{ revRef.current=res.rev; dirtyRef.current=false; setSyncState("synced"); })
+          .catch(()=>{ setSyncState("offline"); });
+        return;
+      }
       apiGet(pass).then(rec=>{
         if(dirtyRef.current) return;
         if((rec.rev||0)>revRef.current){ revRef.current=rec.rev; if(rec.data){ skipPush.current=true; setData(rec.data); } }
-      }).catch(()=>{});
+        setSyncState("synced");
+      }).catch(()=>{ setSyncState("offline"); });
     },4000);
     return ()=>clearInterval(id);
   },[authed,synced]);
@@ -425,6 +437,7 @@ export default function App(){
         }
         .credit-flash { animation: creditFlash 2.2s ease-in-out infinite; color:#e8ff00 !important; font-weight:900 !important; font-size:26px !important; }
         input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
+        @keyframes syncPulse { 0%,100% { opacity:1; } 50% { opacity:0.25; } }
       `}</style>
 
       {/* ── Player Profile Modal ── */}
@@ -643,7 +656,16 @@ export default function App(){
         </div>
         {/* Nav tabs */}
         <div style={{padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:6}}>
-          <div style={{fontSize:9,color:C.textMuted,letterSpacing:2,textTransform:"uppercase"}}>Social · Poker Room</div>
+          <div style={{display:"flex",alignItems:"center",gap:9}}>
+            <div style={{fontSize:9,color:C.textMuted,letterSpacing:2,textTransform:"uppercase"}}>Social · Poker Room</div>
+            {(()=>{ const m={saving:{t:"Saving…",c:C.gold,bg:C.goldFaint,bd:C.goldGlow},synced:{t:"Synced ✓",c:C.win,bg:C.winBg,bd:C.winBorder},offline:{t:"Offline",c:C.loss,bg:C.lossBg,bd:C.lossBorder}}[syncState];
+              return (
+                <span title={syncState==="offline"?"Changes are saved on this device and will sync when the connection returns":"Shared room sync status"} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:9,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",color:m.c,background:m.bg,border:`1px solid ${m.bd}`,borderRadius:20,padding:"2px 8px",whiteSpace:"nowrap"}}>
+                  <span style={{width:6,height:6,borderRadius:"50%",background:m.c,boxShadow:`0 0 6px ${m.c}`,animation:syncState==="saving"?"syncPulse 1s ease-in-out infinite":"none"}}/>
+                  {m.t}
+                </span>
+              ); })()}
+          </div>
           <div style={{display:"flex",gap:5}}>
             {[["games","Games"],["archive","Archive"],["roster","Players"],["monthly","Monthly"]].map(([v,l])=>(
               <Btn key={v} variant={view===v&&view!=="game"?"gold":"ghost"} style={{padding:"5px 12px",fontSize:11,letterSpacing:0.5,textTransform:"uppercase"}} onClick={()=>{setView(v);setSel(null);}}>
