@@ -218,6 +218,8 @@ export default function App(){
   const [showPlayerProfile,setShowPlayerProfile] = useState(null); // player id
   const [editingPlayer,setEditingPlayer] = useState(null); // player id being edited in roster
   const [showSuggestionsForSeat,setShowSuggestionsForSeat] = useState(null);
+  const [pSearch,setPSearch]       = useState("");        // roster search query
+  const [pSort,setPSort]           = useState("name");    // roster sort: name | earnings | sessions
 
   // ── Shared sync state ─────────────────────────────────────────────────────────
   const [authed,setAuthed]   = useState(()=>!!localStorage.getItem(PASS_KEY));
@@ -731,11 +733,46 @@ export default function App(){
               <div style={{fontSize:15,color:C.textSecondary}}>No players yet.</div>
               <div style={{fontSize:12,color:C.textMuted,marginTop:4}}>Players are added automatically when you create games, or add them manually here.</div>
             </div>
-          ):(
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {data.players.map(p=>{
-                const stats=playerLifetimeStats(p.id);
-                const mStats=playerLifetimeStats(p.id,mKey(todayDate()));
+          ):(()=>{
+            const q=pSearch.trim().toLowerCase();
+            const qDigits=q.replace(/\D/g,"");
+            let rows=data.players.map(p=>({p,stats:playerLifetimeStats(p.id),mStats:playerLifetimeStats(p.id,mKey(todayDate()))}));
+            if(q) rows=rows.filter(({p})=>(p.name||"").toLowerCase().includes(q)||(qDigits&&(p.phone||"").replace(/\D/g,"").includes(qDigits)));
+            rows.sort((a,b)=>{
+              if(pSort==="earnings") return b.stats.profit-a.stats.profit;
+              if(pSort==="sessions") return b.stats.sessions-a.stats.sessions;
+              const an=(a.p.name||"").trim(), bn=(b.p.name||"").trim();
+              if(!an!==!bn) return an?-1:1;   // unnamed players sort to the end
+              return an.localeCompare(bn,undefined,{sensitivity:"base"});
+            });
+            const ctrlStyle={background:C.surfaceLo,border:`1.5px solid ${C.border}`,borderRadius:9,color:C.textPrimary,fontSize:13,fontWeight:600,outline:"none",fontFamily:"inherit"};
+            return(
+            <>
+              <div style={{display:"flex",gap:8,marginBottom:14}}>
+                <div style={{position:"relative",flex:1,minWidth:0}}>
+                  <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:13,color:C.textMuted,pointerEvents:"none"}}>🔍</span>
+                  <input value={pSearch} onChange={e=>setPSearch(e.target.value)} placeholder="Search name or phone…"
+                    style={{...ctrlStyle,width:"100%",padding:"10px 32px 10px 34px"}}/>
+                  {pSearch&&<button onClick={()=>setPSearch("")} aria-label="Clear search"
+                    style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.textMuted,fontSize:16,cursor:"pointer",lineHeight:1,padding:4}}>×</button>}
+                </div>
+                <select value={pSort} onChange={e=>setPSort(e.target.value)}
+                  style={{...ctrlStyle,padding:"10px 12px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>
+                  <option value="name">Name A–Z</option>
+                  <option value="earnings">Career $</option>
+                  <option value="sessions">Sessions</option>
+                </select>
+              </div>
+              <div style={{fontSize:10,color:C.textMuted,letterSpacing:1,marginBottom:10,textTransform:"uppercase"}}>
+                {rows.length} {rows.length===1?"player":"players"}{q&&` matching “${pSearch.trim()}”`}
+              </div>
+              {rows.length===0?(
+                <div style={{textAlign:"center",marginTop:50,color:C.textSecondary,fontSize:14}}>
+                  No players match “{pSearch.trim()}”.
+                </div>
+              ):(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {rows.map(({p,stats,mStats})=>{
                 return(
                   <div key={p.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px"}}>
                     <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -768,8 +805,11 @@ export default function App(){
                   </div>
                 );
               })}
-            </div>
-          )}
+              </div>
+              )}
+            </>
+            );
+          })()}
         </div>
       )}
 
