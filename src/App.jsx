@@ -13,12 +13,34 @@ function PhotoCircle({photo, size=40, fontSize=18}){
     : <div style={{width:size,height:size,borderRadius:"50%",background:"#252525",border:"2px solid #333",display:"flex",alignItems:"center",justifyContent:"center",fontSize:fontSize,color:"#555"}}>👤</div>;
 }
 
+// Downscale + JPEG-compress an image data URL so photos stay tiny (~20-40KB).
+// Photos are stored as base64 inside the shared document, so full-res phone
+// photos (multi-MB) would blow past the backend's payload limit on save.
+function shrinkImage(dataUrl, max=320, quality=0.72){
+  return new Promise(resolve=>{
+    const img = new Image();
+    img.onload = () => {
+      let {width:w, height:h} = img;
+      if(w>h){ if(w>max){ h=Math.round(h*max/w); w=max; } }
+      else   { if(h>max){ w=Math.round(w*max/h); h=max; } }
+      try{
+        const canvas = document.createElement("canvas");
+        canvas.width=w; canvas.height=h;
+        canvas.getContext("2d").drawImage(img,0,0,w,h);
+        resolve(canvas.toDataURL("image/jpeg",quality));
+      }catch(_){ resolve(dataUrl); } // fall back to original on any canvas failure
+    };
+    img.onerror = () => resolve(dataUrl); // not a decodable image: keep as-is
+    img.src = dataUrl;
+  });
+}
+
 function PhotoUploadBtn({onPhoto, label="Upload Photo", size="small"}){
   function handleFile(e){
     const file = e.target.files?.[0];
     if(!file) return;
     const reader = new FileReader();
-    reader.onload = ev => onPhoto(ev.target.result);
+    reader.onload = async ev => { onPhoto(await shrinkImage(ev.target.result)); };
     reader.readAsDataURL(file);
     e.target.value="";
   }
