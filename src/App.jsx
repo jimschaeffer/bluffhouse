@@ -526,6 +526,7 @@ export default function App(){
         .credit-flash { animation: creditFlash 2.2s ease-in-out infinite; color:#e8ff00 !important; font-weight:900 !important; font-size:26px !important; }
         input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
         @keyframes syncPulse { 0%,100% { opacity:1; } 50% { opacity:0.25; } }
+        .navtabs::-webkit-scrollbar { display:none; }
       `}</style>
 
       {/* ── Player Profile Modal ── */}
@@ -786,8 +787,8 @@ export default function App(){
           <img src={LOGO_IMG} alt="Bluff House" style={{height:56,width:"auto",objectFit:"contain",display:"block"}}/>
         </div>
         {/* Nav tabs */}
-        <div style={{padding:"8px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:6}}>
-          <div style={{display:"flex",alignItems:"center",gap:9}}>
+        <div style={{padding:"8px 16px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:8}}>
             <div style={{fontSize:9,color:C.textMuted,letterSpacing:2,textTransform:"uppercase"}}>Social · Poker Room</div>
             {(()=>{ const m={saving:{t:"Saving…",c:C.gold,bg:C.goldFaint,bd:C.goldGlow},synced:{t:"Synced ✓",c:C.win,bg:C.winBg,bd:C.winBorder},offline:{t:"Offline",c:C.loss,bg:C.lossBg,bd:C.lossBorder}}[syncState];
               return (
@@ -797,9 +798,9 @@ export default function App(){
                 </span>
               ); })()}
           </div>
-          <div style={{display:"flex",gap:5}}>
-            {[["games","Games"],["archive","Archive"],["roster","Players"],["monthly","Monthly"]].map(([v,l])=>(
-              <Btn key={v} variant={view===v&&view!=="game"?"gold":"ghost"} style={{padding:"5px 12px",fontSize:11,letterSpacing:0.5,textTransform:"uppercase"}} onClick={()=>{setView(v);setSel(null);}}>
+          <div className="navtabs" style={{display:"flex",gap:6,overflowX:"auto",scrollbarWidth:"none"}}>
+            {[["games","Games"],["stats","Stats"],["archive","Archive"],["roster","Players"],["monthly","Monthly"]].map(([v,l])=>(
+              <Btn key={v} variant={view===v&&view!=="game"?"gold":"ghost"} style={{padding:"5px 13px",fontSize:11,letterSpacing:0.5,textTransform:"uppercase",flexShrink:0,whiteSpace:"nowrap"}} onClick={()=>{setView(v);setSel(null);}}>
                 {l}
               </Btn>
             ))}
@@ -815,48 +816,21 @@ export default function App(){
             <Btn variant="gold" style={{padding:"9px 20px",fontSize:12,letterSpacing:0.5}} onClick={openNew}>+ New Game</Btn>
           </div>
           {(()=>{
-            const allGames=data.games;
-            const activeGames=[...allGames].filter(g=>!g.archived);
+            const activeGames=[...data.games].filter(g=>!g.archived);
             const typeLabels={"1-3-nl":"1/3 No Limit","2-5-nl":"2/5 No Limit","5-10-nl":"5/10 No Limit","roe-5":"ROE 5"};
-            // ── Active tables grouped into nights ──
+            if(activeGames.length===0) return(
+              <div style={{textAlign:"center",marginTop:80}}>
+                <div style={{fontSize:48,marginBottom:14}}>🃏</div>
+                <div style={{fontSize:15,color:C.textSecondary}}>No active games.</div>
+                <div style={{fontSize:12,color:C.textMuted,marginTop:4}}>Start a new game, or browse the Stats and Archive tabs.</div>
+              </div>
+            );
             const byDate={}; activeGames.forEach(g=>{ (byDate[g.date]=byDate[g.date]||[]).push(g); });
             const nights=Object.entries(byDate).sort((a,b)=>b[0].localeCompare(a[0]));
-            // ── Dashboard aggregates (read-only, derived) ──
-            let clubIn=0,clubOut=0;
-            allGames.forEach(g=>{ const s=gStats(g); clubIn+=s.ti; clubOut+=s.co; });
-            const nightDates=[...new Set(allGames.map(g=>g.date).filter(Boolean))].sort().reverse();
-            const pstats=data.players.map(p=>({p,st:playerLifetimeStats(p.id)})).filter(x=>x.st.sessions>0);
-            const leaders=[...pstats].sort((a,b)=>b.st.profit-a.st.profit).slice(0,3);
-            const mostHours=[...pstats].filter(x=>x.st.hours>0).sort((a,b)=>b.st.hours-a.st.hours)[0];
-            let bigScore=null,bigLoss=null;
-            allGames.forEach(g=>seatedAll(g).forEach(s=>{ const pr=pProfit(s); if(pr===null)return; if(!bigScore||pr>bigScore.profit)bigScore={name:s.name,profit:pr}; if(!bigLoss||pr<bigLoss.profit)bigLoss={name:s.name,profit:pr}; }));
-            const lastDate=nightDates[0];
-            const lastGames=lastDate?allGames.filter(g=>g.date===lastDate):[];
-            const lastResults=lastGames.flatMap(g=>seatedAll(g).map(s=>({name:s.name,profit:pProfit(s)}))).filter(x=>x.profit!==null).sort((a,b)=>b.profit-a.profit);
-            const lastWinner=lastResults[0], lastRough=lastResults[lastResults.length-1];
-            let lastHouse=0; lastGames.forEach(g=>{ const s=gStats(g); lastHouse+=(s.ti-s.co)-s.deal-s.food; });
-            const lastPlayers=lastGames.reduce((n,g)=>n+seatedAll(g).length,0);
-            const medals=["🥇","🥈","🥉"];
-            const k=n=>n>=1000?`$${(n/1000).toFixed(1)}k`:`$${Math.round(n)}`;
-            const secLabel=(icon,text)=>(<div style={{display:"flex",alignItems:"center",gap:6,margin:"22px 0 9px"}}><span style={{fontSize:13}}>{icon}</span><span style={{fontSize:10,fontWeight:800,color:C.gold,letterSpacing:1.5,textTransform:"uppercase"}}>{text}</span></div>);
-            const card={background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,overflow:"hidden"};
-            const tile=(val,label,color)=>(<div style={{flex:1,background:C.surfaceLo,border:`1px solid ${C.border}`,borderRadius:10,padding:"9px 4px",textAlign:"center",minWidth:0}}><div style={{fontSize:15,fontWeight:800,color:color||C.textPrimary,fontFamily:"monospace"}}>{val}</div><div style={{fontSize:8,color:C.textMuted,letterSpacing:0.5,marginTop:2,textTransform:"uppercase"}}>{label}</div></div>);
-            const record=(icon,iconColor,label,name,val,valColor)=>(<div style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:"11px",minWidth:0}}><div style={{fontSize:15,color:iconColor}}>{icon}</div><div style={{fontSize:8,color:C.textMuted,letterSpacing:1,fontWeight:700,marginTop:5,textTransform:"uppercase"}}>{label}</div><div style={{fontSize:13,fontWeight:800,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div><div style={{fontSize:13,fontFamily:"monospace",color:valColor,fontWeight:700}}>{val}</div></div>);
-            return(<>
-              {/* ── Club by the numbers ── */}
-              {allGames.length>0&&(<>
-                {secLabel("📊","By The Numbers")}
-                <div style={{display:"flex",gap:6,marginBottom:4}}>
-                  {tile(nightDates.length,"Nights")}
-                  {tile(data.players.length,"Players")}
-                  {tile(k(clubIn),"In Play",C.gold)}
-                  {tile(k(clubIn-clubOut),"Raked",C.gold)}
-                </div>
-              </>)}
-
-              {/* ── Active tables tonight ── */}
+            return(
+            <div style={{display:"flex",flexDirection:"column",gap:22}}>
               {nights.map(([date,games])=>(
-                <div key={date} style={{marginBottom:18}}>
+                <div key={date}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                     <div style={{display:"flex",alignItems:"baseline",gap:8}}>
                       <div style={{fontSize:13,fontWeight:800,color:C.textPrimary}}>{fmtDate(date)}</div>
@@ -889,16 +863,53 @@ export default function App(){
                   </div>
                 </div>
               ))}
+            </div>
+            );
+          })()}
+        </div>
+      )}
 
-              {/* ── Empty-state CTA (no game running) ── */}
-              {activeGames.length===0&&(
-                <div style={{...card,padding:"22px 18px",textAlign:"center"}}>
-                  <div style={{fontSize:40,marginBottom:8}}>🃏</div>
-                  <div style={{fontSize:14,fontWeight:700,color:C.textPrimary}}>No game running right now</div>
-                  <div style={{fontSize:11,color:C.textMuted,marginTop:3,marginBottom:14}}>Fire one up — players and stats roll in automatically.</div>
-                  <button onClick={openNew} style={{background:"linear-gradient(135deg,#b8860b,#e2b55a)",color:"#000",border:"none",borderRadius:11,padding:"13px 22px",fontWeight:900,fontSize:14,letterSpacing:0.4,cursor:"pointer"}}>🎴 Start tonight's game</button>
-                </div>
-              )}
+      {/* ══ STATS VIEW ══ */}
+      {view==="stats"&&(()=>{
+        const allGames=data.games;
+        let clubIn=0,clubOut=0;
+        allGames.forEach(g=>{ const s=gStats(g); clubIn+=s.ti; clubOut+=s.co; });
+        const nightDates=[...new Set(allGames.map(g=>g.date).filter(Boolean))].sort().reverse();
+        const pstats=data.players.map(p=>({p,st:playerLifetimeStats(p.id)})).filter(x=>x.st.sessions>0);
+        const leaders=[...pstats].sort((a,b)=>b.st.profit-a.st.profit).slice(0,3);
+        const mostHours=[...pstats].filter(x=>x.st.hours>0).sort((a,b)=>b.st.hours-a.st.hours)[0];
+        let bigScore=null,bigLoss=null;
+        allGames.forEach(g=>seatedAll(g).forEach(s=>{ const pr=pProfit(s); if(pr===null)return; if(!bigScore||pr>bigScore.profit)bigScore={name:s.name,profit:pr}; if(!bigLoss||pr<bigLoss.profit)bigLoss={name:s.name,profit:pr}; }));
+        const lastDate=nightDates[0];
+        const lastGames=lastDate?allGames.filter(g=>g.date===lastDate):[];
+        const lastResults=lastGames.flatMap(g=>seatedAll(g).map(s=>({name:s.name,profit:pProfit(s)}))).filter(x=>x.profit!==null).sort((a,b)=>b.profit-a.profit);
+        const lastWinner=lastResults[0], lastRough=lastResults[lastResults.length-1];
+        let lastHouse=0; lastGames.forEach(g=>{ const s=gStats(g); lastHouse+=(s.ti-s.co)-s.deal-s.food; });
+        const lastPlayers=lastGames.reduce((n,g)=>n+seatedAll(g).length,0);
+        const medals=["🥇","🥈","🥉"];
+        const k=n=>n>=1000?`$${(n/1000).toFixed(1)}k`:`$${Math.round(n)}`;
+        const secLabel=(icon,text)=>(<div style={{display:"flex",alignItems:"center",gap:6,margin:"22px 0 9px"}}><span style={{fontSize:13}}>{icon}</span><span style={{fontSize:10,fontWeight:800,color:C.gold,letterSpacing:1.5,textTransform:"uppercase"}}>{text}</span></div>);
+        const card={background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,overflow:"hidden"};
+        const tile=(val,label,color)=>(<div style={{flex:1,background:C.surfaceLo,border:`1px solid ${C.border}`,borderRadius:10,padding:"9px 4px",textAlign:"center",minWidth:0}}><div style={{fontSize:15,fontWeight:800,color:color||C.textPrimary,fontFamily:"monospace"}}>{val}</div><div style={{fontSize:8,color:C.textMuted,letterSpacing:0.5,marginTop:2,textTransform:"uppercase"}}>{label}</div></div>);
+        const record=(icon,iconColor,label,name,val,valColor)=>(<div style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:"11px",minWidth:0}}><div style={{fontSize:15,color:iconColor}}>{icon}</div><div style={{fontSize:8,color:C.textMuted,letterSpacing:1,fontWeight:700,marginTop:5,textTransform:"uppercase"}}>{label}</div><div style={{fontSize:13,fontWeight:800,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div><div style={{fontSize:13,fontFamily:"monospace",color:valColor,fontWeight:700}}>{val}</div></div>);
+        return(
+          <div style={{flex:1,padding:"20px 16px",maxWidth:600,margin:"0 auto",width:"100%"}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:2}}>Bluff House · Stats</div>
+            {allGames.length===0?(
+              <div style={{textAlign:"center",marginTop:80}}>
+                <div style={{fontSize:48,marginBottom:14}}>📊</div>
+                <div style={{fontSize:15,color:C.textSecondary}}>No stats yet.</div>
+                <div style={{fontSize:12,color:C.textMuted,marginTop:4}}>Play a night — leaders, records, and totals show up here.</div>
+              </div>
+            ):(<>
+              {/* ── Club by the numbers ── */}
+              {secLabel("📊","By The Numbers")}
+              <div style={{display:"flex",gap:6}}>
+                {tile(nightDates.length,"Nights")}
+                {tile(data.players.length,"Players")}
+                {tile(k(clubIn),"In Play",C.gold)}
+                {tile(k(clubIn-clubOut),"Raked",C.gold)}
+              </div>
 
               {/* ── All-Time Leaders ── */}
               {leaders.length>0&&(<>
@@ -917,7 +928,7 @@ export default function App(){
                 </div>
               </>)}
 
-              {/* ── Last Night recap ── */}
+              {/* ── Most Recent recap ── */}
               {lastWinner&&(<>
                 {secLabel("🕓",`Most Recent · ${fmtDate(lastDate)}`)}
                 <div style={{...card,padding:"13px 14px",cursor:"pointer"}} onClick={()=>setView("archive")}>
@@ -949,10 +960,10 @@ export default function App(){
                   {bigLoss&&record("🧊",C.loss,"Biggest Loss",bigLoss.name,fmtMoney(bigLoss.profit,true),C.loss)}
                 </div>
               </>)}
-            </>);
-          })()}
-        </div>
-      )}
+            </>)}
+          </div>
+        );
+      })()}
 
       {/* ══ PLAYER ROSTER ══ */}
       {view==="roster"&&(
