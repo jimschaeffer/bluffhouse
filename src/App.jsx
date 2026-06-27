@@ -120,8 +120,14 @@ const SEAT_POS = {
 
 // ── Data schemas ──────────────────────────────────────────────────────────────
 const EMPTY_SEAT  = seat => ({id:uid(),seat,name:"",photo:"",phone:"",buyIn:"",buyInStatus:"paid",rebuys:[],rebuyStatuses:[],cashOut:"",loginTime:"",cashOutTime:"",playerId:null,seatClosed:false});
-const EMPTY_GAME  = ()   => ({id:uid(),date:todayDate(),name:"",gameType:"1-3-nl",seats:Array.from({length:10},(_,i)=>EMPTY_SEAT(i+1)),dealerTip:"",foodCost:"",notes:"",_sub:"table",archived:false,closedOut:false});
+const EMPTY_GAME  = ()   => ({id:uid(),date:todayDate(),name:"",gameType:"1-3-nl",seats:Array.from({length:10},(_,i)=>EMPTY_SEAT(i+1)),dealerTip:"",foodCost:"",notes:"",_sub:"table",archived:false,closedOut:false,closedSeats:[]});
 const EMPTY_PLAYER= ()   => ({id:uid(),name:"",photo:"",phone:""});
+
+// Everyone who played this table this night = currently-seated players + cashed-out
+// (closed) players whose seats were freed. All accounting reads through this so a
+// freed seat never drops a player from the ledger/stats. (closedSeats defaults to []
+// for games created before this feature, so existing data is unaffected.)
+const seatedAll = g => [...g.seats.filter(s=>s.name), ...(g.closedSeats||[])];
 
 const SK = "bluffhouse_v6";
 function load(){
@@ -242,6 +248,7 @@ export default function App(){
   const [showSuggestionsForSeat,setShowSuggestionsForSeat] = useState(null);
   const [pSearch,setPSearch]       = useState("");        // roster search query
   const [pSort,setPSort]           = useState("name");    // roster sort: name | earnings | sessions
+  const [transferFrom,setTransferFrom] = useState(null);  // {gid,seat} → transfer picker open
 
   // ── Shared sync state ─────────────────────────────────────────────────────────
   const [authed,setAuthed]   = useState(()=>!!localStorage.getItem(PASS_KEY));
@@ -369,6 +376,62 @@ export default function App(){
   }
   function clrSeat(gId,sn){ upSeat(gId,sn,{name:"",photo:"",phone:"",buyIn:"",buyInStatus:"paid",rebuys:[],rebuyStatuses:[],cashOut:"",loginTime:"",cashOutTime:"",playerId:null}); setSel(null); }
 
+  // Cash-out & close: move the seat's player into closedSeats (kept in all accounting)
+  // and free the live seat so a new player can sit down.
+  function closeOutSeat(gId,sn){
+    setData(d=>({...d,games:d.games.map(g=>{
+      if(g.id!==gId) return g;
+      const seat=g.seats.find(s=>s.seat===sn);
+      if(!seat||!seat.name) return g;
+      return {
+        ...g,
+        seats:g.seats.map(s=>s.seat===sn?EMPTY_SEAT(sn):s),
+        closedSeats:[...(g.closedSeats||[]),{...seat,seatClosed:true}],
+      };
+    })}));
+    setSel(null);
+  }
+  // Reopen a closed player: move them back to an open seat (their original if free) to edit.
+  function reopenSeat(gId,closedId){
+    setData(d=>({...d,games:d.games.map(g=>{
+      if(g.id!==gId) return g;
+      const closed=(g.closedSeats||[]).find(s=>s.id===closedId);
+      if(!closed) return g;
+      let target=g.seats.find(s=>s.seat===closed.seat&&!s.name)||g.seats.find(s=>!s.name);
+      if(!target){ alert("Table is full — free a seat before reopening this player."); return g; }
+      return {
+        ...g,
+        seats:g.seats.map(s=>s.seat===target.seat?{...closed,seat:target.seat,id:s.id,seatClosed:false}:s),
+        closedSeats:(g.closedSeats||[]).filter(s=>s.id!==closedId),
+      };
+    })}));
+  }
+  // Transfer a live player to an open seat at another table the same night.
+  // Their full record (buy-ins, time-in, identity) moves with them — one session.
+  function transferSeat(fromGid,sn,toGid){
+    setData(d=>{
+      const from=d.games.find(g=>g.id===fromGid);
+      const to=d.games.find(g=>g.id===toGid);
+      const seat=from?.seats.find(s=>s.seat===sn);
+      const open=to?.seats.find(s=>!s.name);
+      if(!seat||!seat.name||!open){ return d; }
+      return {...d,games:d.games.map(g=>{
+        if(g.id===fromGid) return {...g,seats:g.seats.map(s=>s.seat===sn?EMPTY_SEAT(sn):s)};
+        if(g.id===toGid)   return {...g,seats:g.seats.map(s=>s.seat===open.seat?{...seat,seat:open.seat,id:s.id}:s)};
+        return g;
+      })};
+    });
+    setSel(null); setTransferFrom(null);
+  }
+  // Add another table to a given night (date), defaulting stakes/name from the first table.
+  function addTable(nightGames){
+    const first=nightGames[0]||{};
+    const base=(first.name||"Poker Night").replace(/\s*[-–·]?\s*Table\s*\d+\s*$/i,"").trim()||"Poker Night";
+    const g={...EMPTY_GAME(),date:first.date||todayDate(),gameType:first.gameType||"1-3-nl",name:`${base} · Table ${nightGames.length+1}`};
+    setData(d=>({...d,games:[...d.games,g]}));
+    setGid(g.id); setSel(null); setView("game");
+  }
+
   // Load a registered player into a seat
   function loadPlayerToSeat(player){
     upSeat(game.id,sel,{name:player.name,photo:player.photo||"",phone:player.phone||"",playerId:player.id});
@@ -394,7 +457,7 @@ export default function App(){
   }
 
   function gStats(g){
-    const active=g.seats.filter(s=>s.name);
+    const active=seatedAll(g);
     const bi=active.reduce((s,p)=>s+parseFloat(p.buyIn||0),0);
     const rb=active.reduce((s,p)=>s+(p.rebuys||[]).reduce((sr,r)=>sr+parseFloat(r||0),0),0);
     const co=active.reduce((s,p)=>s+parseFloat(p.cashOut||0),0);
@@ -409,7 +472,7 @@ export default function App(){
     let sessions=0,totalIn=0,totalOut=0,profit=0,hours=0,points=0,wins=0,losses=0;
     data.games.forEach(g=>{
       if(filterMonth && mKey(g.date)!==filterMonth) return;
-      g.seats.filter(s=>s.name&&(s.playerId===playerId||s.name.toLowerCase()===name.toLowerCase())).forEach(s=>{
+      seatedAll(g).filter(s=>s.name&&(s.playerId===playerId||s.name.toLowerCase()===name.toLowerCase())).forEach(s=>{
         const ti=parseFloat(s.buyIn||0)+(s.rebuys||[]).reduce((a,r)=>a+parseFloat(r||0),0);
         const to=parseFloat(s.cashOut||0), pr=s.cashOut?to-ti:null, hrs=calcHours(s.loginTime,s.cashOutTime);
         sessions++; totalIn+=ti; if(s.cashOut) totalOut+=to;
@@ -423,7 +486,7 @@ export default function App(){
   const months=[...new Set(data.games.map(g=>mKey(g.date)).filter(Boolean))].sort().reverse();
   function moStats(mk){
     const games=data.games.filter(g=>mKey(g.date)===mk); const pl={};
-    games.forEach(g=>g.seats.filter(s=>s.name).forEach(s=>{
+    games.forEach(g=>seatedAll(g).forEach(s=>{
       const n=s.name.trim(); if(!pl[n])pl[n]={name:n,sessions:0,totalIn:0,totalOut:0,profit:0,hours:0,points:0,games:[]};
       const ti=parseFloat(s.buyIn||0)+(s.rebuys||[]).reduce((a,r)=>a+parseFloat(r||0),0);
       const to=parseFloat(s.cashOut||0), pr=s.cashOut?to-ti:null, hrs=calcHours(s.loginTime,s.cashOutTime);
@@ -579,6 +642,49 @@ export default function App(){
       })()}
 
       {/* ── Player Picker Modal ── */}
+      {/* ── Transfer Player Modal ── */}
+      {transferFrom&&(()=>{
+        const src=data.games.find(g=>g.id===transferFrom.gid);
+        const player=src?.seats.find(s=>s.seat===transferFrom.seat);
+        if(!src||!player) return null;
+        const typeLabels={"1-3-nl":"1/3 NL","2-5-nl":"2/5 NL","5-10-nl":"5/10 NL","roe-5":"ROE 5"};
+        const targets=data.games.filter(g=>!g.archived&&g.date===src.date&&g.id!==src.id);
+        return(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:310,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:18,width:"min(94vw,420px)",maxHeight:"80vh",overflow:"hidden",boxShadow:"0 24px 80px #000",display:"flex",flexDirection:"column"}}>
+              <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+                <div>
+                  <div style={{fontSize:15,fontWeight:800,color:C.textPrimary}}>Transfer Player</div>
+                  <div style={{fontSize:11,color:C.textSecondary,marginTop:2}}>Move <span style={{color:C.gold,fontWeight:700}}>{player.name}</span> to another table</div>
+                </div>
+                <button onClick={()=>setTransferFrom(null)} style={{background:"none",border:"none",color:C.textMuted,fontSize:20,cursor:"pointer"}}>×</button>
+              </div>
+              <div style={{padding:"12px 16px",fontSize:11,color:C.textMuted,borderBottom:`1px solid ${C.border}`,lineHeight:1.5}}>
+                Their buy-ins and time-in move with them — they’ll cash out at the table they finish on.
+              </div>
+              <div style={{overflowY:"auto",flex:1,padding:"10px 12px"}}>
+                {targets.length===0?(
+                  <div style={{padding:"24px 14px",textAlign:"center",color:C.textMuted,fontSize:12}}>No other tables tonight. Add one from the Games list first.</div>
+                ):targets.map(t=>{
+                  const open=t.seats.filter(s=>!s.name).length;
+                  const full=open===0;
+                  return(
+                    <button key={t.id} disabled={full} onClick={()=>transferSeat(src.id,player.seat,t.id)}
+                      style={{width:"100%",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"12px 14px",marginBottom:6,background:C.surfaceLo,border:`1px solid ${C.border}`,borderRadius:10,cursor:full?"default":"pointer",opacity:full?0.45:1}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:C.textPrimary}}>{t.name||"Poker Night"}</div>
+                        <div style={{fontSize:10,color:C.gold,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginTop:2}}>{typeLabels[t.gameType]||"1/3 NL"}</div>
+                      </div>
+                      <div style={{flexShrink:0,fontSize:11,color:full?C.loss:C.textSecondary,fontWeight:600}}>{full?"Full":`${open} open`}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {showPlayerPicker&&game&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
           <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:18,width:"min(94vw,420px)",maxHeight:"80vh",overflow:"hidden",boxShadow:"0 24px 80px #000",display:"flex",flexDirection:"column"}}>
@@ -713,28 +819,51 @@ export default function App(){
               <div style={{fontSize:15,color:C.textSecondary}}>No active games.</div>
               <div style={{fontSize:12,color:C.textMuted,marginTop:4}}>Create a new game or check the Archive for closed games.</div>
             </div>
-          ):(
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {[...data.games].filter(g=>!g.archived).sort((a,b)=>b.date.localeCompare(a.date)).map(g=>{
-                const s=gStats(g);
-                return(
-                  <div key={g.id} onClick={()=>{setGid(g.id);setSel(null);setView("game");}}
-                    style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                    <div>
-                      <div style={{fontSize:14,fontWeight:800,color:C.textPrimary}}>{g.name||"Poker Night"} <span style={{color:C.gold}}>·</span> {fmtDate(g.date)}</div>
-                      <div style={{fontSize:10,color:C.gold,fontWeight:700,marginTop:1,textTransform:"uppercase",letterSpacing:1}}>
-                        {{"1-3-nl":"1/3 No Limit","2-5-nl":"2/5 No Limit","5-10-nl":"5/10 No Limit","roe-5":"ROE 5"}[g.gameType]||"1/3 No Limit"}
-                      </div>
-                      <div style={{fontSize:11,color:C.textSecondary,marginTop:3}}>{s.active.length} players · <span style={{color:C.gold,fontFamily:"monospace"}}>{fmtMoney(s.ti)}</span> in play</div>
+          ):(()=>{
+            // Group active tables into nights by date.
+            const byDate={};
+            [...data.games].filter(g=>!g.archived).forEach(g=>{ (byDate[g.date]=byDate[g.date]||[]).push(g); });
+            const nights=Object.entries(byDate).sort((a,b)=>b[0].localeCompare(a[0]));
+            const typeLabels={"1-3-nl":"1/3 No Limit","2-5-nl":"2/5 No Limit","5-10-nl":"5/10 No Limit","roe-5":"ROE 5"};
+            return(
+            <div style={{display:"flex",flexDirection:"column",gap:22}}>
+              {nights.map(([date,games])=>(
+                <div key={date}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                    <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                      <div style={{fontSize:13,fontWeight:800,color:C.textPrimary}}>{fmtDate(date)}</div>
+                      <div style={{fontSize:10,color:C.textMuted,textTransform:"uppercase",letterSpacing:1}}>{games.length} table{games.length!==1?"s":""}</div>
                     </div>
-                    <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                      <Btn variant="ghost" style={{padding:"4px 9px",fontSize:12,color:C.textMuted}} onClick={e=>{e.stopPropagation();setDelId(g.id);}}>✕</Btn>
-                    </div>
+                    <Btn variant="goldOutline" style={{padding:"5px 11px",fontSize:11}} onClick={()=>addTable(games)}>+ Add Table</Btn>
                   </div>
-                );
-              })}
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {games.map((g,ti)=>{
+                      const s=gStats(g);
+                      return(
+                        <div key={g.id} onClick={()=>{setGid(g.id);setSel(null);setView("game");}}
+                          style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <div>
+                            <div style={{display:"flex",alignItems:"center",gap:8}}>
+                              <span style={{fontSize:9,fontWeight:800,color:C.gold,background:C.goldFaint,border:`1px solid ${C.goldGlow}`,borderRadius:5,padding:"2px 7px",textTransform:"uppercase",letterSpacing:0.8,flexShrink:0}}>Table {ti+1}</span>
+                              <div style={{fontSize:14,fontWeight:800,color:C.textPrimary}}>{g.name||"Poker Night"}</div>
+                            </div>
+                            <div style={{fontSize:10,color:C.gold,fontWeight:700,marginTop:4,textTransform:"uppercase",letterSpacing:1}}>
+                              {typeLabels[g.gameType]||"1/3 No Limit"}
+                            </div>
+                            <div style={{fontSize:11,color:C.textSecondary,marginTop:3}}>{s.active.length} player{s.active.length!==1?"s":""} · <span style={{color:C.gold,fontFamily:"monospace"}}>{fmtMoney(s.ti)}</span> in</div>
+                          </div>
+                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                            <Btn variant="ghost" style={{padding:"4px 9px",fontSize:12,color:C.textMuted}} onClick={e=>{e.stopPropagation();setDelId(g.id);}}>✕</Btn>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
@@ -888,6 +1017,9 @@ export default function App(){
                     </div>
                     <div style={{display:"flex",gap:7,alignItems:"center"}}>
                       <Btn variant="goldOutline" style={{fontSize:10,padding:"5px 10px"}} onClick={()=>setShowPlayerPicker(true)}>Select Player</Btn>
+                      {ss.name&&data.games.some(g=>!g.archived&&g.date===game.date&&g.id!==game.id&&g.seats.some(x=>!x.name))&&(
+                        <Btn variant="ghost" style={{fontSize:11,padding:"6px 10px",color:C.blue,border:`1px solid ${C.blueBorder}`}} onClick={()=>setTransferFrom({gid:game.id,seat:sel})}>Transfer →</Btn>
+                      )}
                       {ss.name&&<Btn variant="danger" style={{fontSize:11,padding:"6px 10px"}} onClick={()=>clrSeat(game.id,sel)}>Remove</Btn>}
                     </div>
                   </div>
@@ -1115,7 +1247,7 @@ export default function App(){
                       const ti=parseFloat(p.buyIn||0)+(p.rebuys||[]).reduce((a,r)=>a+parseFloat(r||0),0);
                       const co=parseFloat(p.cashOut||0), profit=p.cashOut?co-ti:null, hrs=calcHours(p.loginTime,p.cashOutTime), pts=hrs?calcPoints(hrs):null;
                       return(
-                        <tr key={p.seat} style={{borderBottom:`1px solid ${C.border}`,background:ri%2===0?"transparent":C.surfaceLo}}>
+                        <tr key={p.id} style={{borderBottom:`1px solid ${C.border}`,background:ri%2===0?"transparent":C.surfaceLo}}>
                           <td style={{padding:"11px 10px"}}>
                             <div style={{display:"flex",alignItems:"center",gap:8}}>
                               <span style={{flexShrink:0,display:"inline-flex"}}><PhotoCircle photo={p.photo} size={24} fontSize={12}/></span>
@@ -1233,8 +1365,26 @@ export default function App(){
                       const totalIn=parseFloat(p.buyIn||0)+(p.rebuys||[]).reduce((a,r)=>a+parseFloat(r||0),0);
                       const profit=pProfit(p), win=profit!==null&&profit>=0;
                       const hasCredit=(p.buyInStatus||"paid")==="credit"||(p.rebuys||[]).some((_,ri)=>((p.rebuyStatuses||[])[ri]||"paid")==="credit");
+                      const rowBorder=i<activePlayers.length-1?`1px solid ${C.border}`:"none";
+                      // Closed-out players: compact read-only row with an Edit (reopen) action.
+                      if(p.seatClosed) return(
+                        <div key={p.id} style={{padding:"12px 18px",borderBottom:rowBorder,display:"flex",alignItems:"center",gap:10,opacity:0.92}}>
+                          <div style={{flexShrink:0}}><PhotoCircle photo={p.photo} size={32} fontSize={15}/></div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:13,fontWeight:700,color:C.textPrimary}}>{p.name}</div>
+                            <div style={{fontSize:10,color:C.win,fontWeight:700,letterSpacing:0.5}}>✓ Closed Out · in {fmtMoney(totalIn)}</div>
+                          </div>
+                          {profit!==null&&(
+                            <div style={{textAlign:"right",flexShrink:0}}>
+                              <div style={{fontSize:15,fontWeight:900,fontFamily:"monospace",color:win?C.win:C.loss}}>{win?"+":""}{fmtMoney(profit)}</div>
+                            </div>
+                          )}
+                          <button onClick={()=>reopenSeat(game.id,p.id)} disabled={game.closedOut}
+                            style={{flexShrink:0,padding:"7px 12px",background:"rgba(226,181,90,0.12)",color:C.gold,border:`1.5px solid ${C.goldGlow}`,borderRadius:8,fontWeight:700,fontSize:11,cursor:game.closedOut?"default":"pointer",opacity:game.closedOut?0.4:1}}>✎ Edit</button>
+                        </div>
+                      );
                       return(
-                        <div key={p.seat} style={{padding:"14px 18px",borderBottom:i<activePlayers.length-1?`1px solid ${C.border}`:"none"}}>
+                        <div key={p.id} style={{padding:"14px 18px",borderBottom:rowBorder}}>
                           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                             <div style={{display:"flex",alignItems:"center",gap:10}}>
                               <div style={{flexShrink:0}}><PhotoCircle photo={p.photo} size={36} fontSize={18}/></div>
@@ -1354,37 +1504,21 @@ export default function App(){
                               </div>
                             )}
                           </div>
-                          {/* Per-player save + edit buttons */}
+                          {/* Cash out & free the seat */}
                           <div style={{display:"flex",gap:8,marginTop:12}}>
                             <button
-                              onClick={()=>{ savePlayerToRegistry(p); upSeat(game.id,p.seat,{seatClosed:true}); }}
-                              disabled={p.seatClosed}
+                              onClick={()=>{ savePlayerToRegistry(p); closeOutSeat(game.id,p.seat); }}
+                              disabled={game.closedOut}
                               style={{
                                 flex:1, padding:"10px",
-                                background:p.seatClosed?"#1a2a1a":C.win,
-                                color:p.seatClosed?"#3a6a3a":"#000",
-                                border:`1px solid ${p.seatClosed?"#2a4a2a":C.win}`,
-                                borderRadius:9, fontWeight:800, fontSize:12, cursor:p.seatClosed?"default":"pointer",
+                                background:C.win, color:"#000", border:`1px solid ${C.win}`,
+                                borderRadius:9, fontWeight:800, fontSize:12, cursor:game.closedOut?"default":"pointer",
+                                opacity:game.closedOut?0.4:1,
                                 display:"flex", alignItems:"center", justifyContent:"center", gap:6,
                                 transition:"all 0.2s",
                               }}>
-                              {p.seatClosed ? "✓ Closed Out" : "✓ Save & Close"}
+                              ✓ Save &amp; Close
                             </button>
-                            {p.seatClosed&&(
-                              <button
-                                onClick={()=>upSeat(game.id,p.seat,{seatClosed:false})}
-                                style={{
-                                  padding:"10px 16px",
-                                  background:"rgba(226,181,90,0.12)",
-                                  color:C.gold,
-                                  border:`1.5px solid ${C.goldGlow}`,
-                                  borderRadius:9, fontWeight:700, fontSize:12, cursor:"pointer",
-                                  display:"flex", alignItems:"center", justifyContent:"center", gap:5,
-                                  transition:"all 0.15s",
-                                }}>
-                                ✎ Edit
-                              </button>
-                            )}
                           </div>
                         </div>
                       );
@@ -1400,7 +1534,7 @@ export default function App(){
                       const profit=pProfit(p),win=profit>=0;
                       const medals=["🥇","🥈","🥉"];
                       return(
-                        <div key={p.seat} style={{display:"flex",alignItems:"center",padding:"12px 18px",borderBottom:i<sorted.filter(x=>pProfit(x)!==null).length-1?`1px solid ${C.border}`:"none"}}>
+                        <div key={p.id} style={{display:"flex",alignItems:"center",padding:"12px 18px",borderBottom:i<sorted.filter(x=>pProfit(x)!==null).length-1?`1px solid ${C.border}`:"none"}}>
                           <div style={{fontSize:i<3?18:12,width:28,textAlign:"center",marginRight:10,flexShrink:0,color:i>=3?C.textMuted:undefined,fontWeight:700}}>{i<3?medals[i]:`#${i+1}`}</div>
                           <span style={{marginRight:6,flexShrink:0,display:"inline-flex"}}><PhotoCircle photo={p.photo} size={24} fontSize={12}/></span>
                           <div style={{flex:1,fontSize:14,fontWeight:700,color:C.textPrimary}}>{p.name}</div>
@@ -1493,8 +1627,9 @@ export default function App(){
                 const s=gStats(g);
                 const finalProfit=(s.ti-s.co)-s.deal-s.food;
                 const gameTypeLabels={"1-3-nl":"1/3 NL","2-5-nl":"2/5 NL","5-10-nl":"5/10 NL","roe-5":"ROE 5"};
-                const closedPlayers=g.seats.filter(x=>x.name&&x.seatClosed).length;
-                const totalPlayers=g.seats.filter(x=>x.name).length;
+                const archPlayers=seatedAll(g);
+                const closedPlayers=archPlayers.filter(x=>x.seatClosed).length;
+                const totalPlayers=archPlayers.length;
                 return(
                   <div key={g.id} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden"}}>
                     {/* Header */}
@@ -1512,7 +1647,7 @@ export default function App(){
 
                     {/* Player results */}
                     <div style={{padding:"10px 16px"}}>
-                      {g.seats.filter(x=>x.name).sort((a,b)=>{
+                      {[...archPlayers].sort((a,b)=>{
                         const pa=parseFloat(a.cashOut||0)-(parseFloat(a.buyIn||0)+(a.rebuys||[]).reduce((s,r)=>s+parseFloat(r||0),0));
                         const pb=parseFloat(b.cashOut||0)-(parseFloat(b.buyIn||0)+(b.rebuys||[]).reduce((s,r)=>s+parseFloat(r||0),0));
                         return pb-pa;
@@ -1522,7 +1657,7 @@ export default function App(){
                         const hrs=calcHours(p.loginTime,p.cashOutTime);
                         const medals=["🥇","🥈","🥉"];
                         return(
-                          <div key={p.seat} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:pi<g.seats.filter(x=>x.name).length-1?`1px solid ${C.border}`:"none"}}>
+                          <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:pi<archPlayers.length-1?`1px solid ${C.border}`:"none"}}>
                             <span style={{fontSize:pi<3?14:10,width:20,textAlign:"center",flexShrink:0}}>{pi<3?medals[pi]:`#${pi+1}`}</span>
                             <PhotoCircle photo={p.photo} size={28} fontSize={13}/>
                             <div style={{flex:1,minWidth:0}}>
