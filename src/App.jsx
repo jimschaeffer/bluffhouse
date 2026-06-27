@@ -798,9 +798,9 @@ export default function App(){
                 </span>
               ); })()}
           </div>
-          <div className="navtabs" style={{display:"flex",gap:6,overflowX:"auto",scrollbarWidth:"none"}}>
+          <div className="navtabs" style={{display:"flex",gap:4,overflowX:"auto",scrollbarWidth:"none"}}>
             {[["games","Games"],["stats","Stats"],["archive","Archive"],["roster","Players"],["monthly","Monthly"]].map(([v,l])=>(
-              <Btn key={v} variant={view===v&&view!=="game"?"gold":"ghost"} style={{padding:"5px 13px",fontSize:11,letterSpacing:0.5,textTransform:"uppercase",flexShrink:0,whiteSpace:"nowrap"}} onClick={()=>{setView(v);setSel(null);}}>
+              <Btn key={v} variant={view===v&&view!=="game"?"gold":"ghost"} style={{flex:1,padding:"6px 4px",fontSize:10,letterSpacing:0.2,textTransform:"uppercase",whiteSpace:"nowrap",textAlign:"center"}} onClick={()=>{setView(v);setSel(null);}}>
                 {l}
               </Btn>
             ))}
