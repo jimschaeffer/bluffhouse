@@ -814,22 +814,38 @@ export default function App(){
             <div style={{fontSize:11,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:2}}>Game History</div>
             <Btn variant="gold" style={{padding:"9px 20px",fontSize:12,letterSpacing:0.5}} onClick={openNew}>+ New Game</Btn>
           </div>
-          {data.games.filter(g=>!g.archived).length===0?(
-            <div style={{textAlign:"center",marginTop:80}}>
-              <div style={{fontSize:48,marginBottom:14}}>🃏</div>
-              <div style={{fontSize:15,color:C.textSecondary}}>No active games.</div>
-              <div style={{fontSize:12,color:C.textMuted,marginTop:4}}>Create a new game or check the Archive for closed games.</div>
-            </div>
-          ):(()=>{
-            // Group active tables into nights by date.
-            const byDate={};
-            [...data.games].filter(g=>!g.archived).forEach(g=>{ (byDate[g.date]=byDate[g.date]||[]).push(g); });
-            const nights=Object.entries(byDate).sort((a,b)=>b[0].localeCompare(a[0]));
+          {(()=>{
+            const allGames=data.games;
+            const activeGames=[...allGames].filter(g=>!g.archived);
             const typeLabels={"1-3-nl":"1/3 No Limit","2-5-nl":"2/5 No Limit","5-10-nl":"5/10 No Limit","roe-5":"ROE 5"};
-            return(
-            <div style={{display:"flex",flexDirection:"column",gap:22}}>
+            // ── Active tables grouped into nights ──
+            const byDate={}; activeGames.forEach(g=>{ (byDate[g.date]=byDate[g.date]||[]).push(g); });
+            const nights=Object.entries(byDate).sort((a,b)=>b[0].localeCompare(a[0]));
+            // ── Dashboard aggregates (read-only, derived) ──
+            let clubIn=0,clubOut=0;
+            allGames.forEach(g=>{ const s=gStats(g); clubIn+=s.ti; clubOut+=s.co; });
+            const nightDates=[...new Set(allGames.map(g=>g.date).filter(Boolean))].sort().reverse();
+            const pstats=data.players.map(p=>({p,st:playerLifetimeStats(p.id)})).filter(x=>x.st.sessions>0);
+            const leaders=[...pstats].sort((a,b)=>b.st.profit-a.st.profit).slice(0,3);
+            const mostHours=[...pstats].filter(x=>x.st.hours>0).sort((a,b)=>b.st.hours-a.st.hours)[0];
+            let bigScore=null,bigLoss=null;
+            allGames.forEach(g=>seatedAll(g).forEach(s=>{ const pr=pProfit(s); if(pr===null)return; if(!bigScore||pr>bigScore.profit)bigScore={name:s.name,profit:pr}; if(!bigLoss||pr<bigLoss.profit)bigLoss={name:s.name,profit:pr}; }));
+            const lastDate=nightDates[0];
+            const lastGames=lastDate?allGames.filter(g=>g.date===lastDate):[];
+            const lastResults=lastGames.flatMap(g=>seatedAll(g).map(s=>({name:s.name,profit:pProfit(s)}))).filter(x=>x.profit!==null).sort((a,b)=>b.profit-a.profit);
+            const lastWinner=lastResults[0], lastRough=lastResults[lastResults.length-1];
+            let lastHouse=0; lastGames.forEach(g=>{ const s=gStats(g); lastHouse+=(s.ti-s.co)-s.deal-s.food; });
+            const lastPlayers=lastGames.reduce((n,g)=>n+seatedAll(g).length,0);
+            const medals=["🥇","🥈","🥉"];
+            const k=n=>n>=1000?`$${(n/1000).toFixed(1)}k`:`$${Math.round(n)}`;
+            const secLabel=(icon,text)=>(<div style={{display:"flex",alignItems:"center",gap:6,margin:"22px 0 9px"}}><span style={{fontSize:13}}>{icon}</span><span style={{fontSize:10,fontWeight:800,color:C.gold,letterSpacing:1.5,textTransform:"uppercase"}}>{text}</span></div>);
+            const card={background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,overflow:"hidden"};
+            const tile=(val,label,color)=>(<div style={{flex:1,background:C.surfaceLo,border:`1px solid ${C.border}`,borderRadius:10,padding:"9px 4px",textAlign:"center",minWidth:0}}><div style={{fontSize:15,fontWeight:800,color:color||C.textPrimary,fontFamily:"monospace"}}>{val}</div><div style={{fontSize:8,color:C.textMuted,letterSpacing:0.5,marginTop:2,textTransform:"uppercase"}}>{label}</div></div>);
+            const record=(icon,iconColor,label,name,val,valColor)=>(<div style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:"11px",minWidth:0}}><div style={{fontSize:15,color:iconColor}}>{icon}</div><div style={{fontSize:8,color:C.textMuted,letterSpacing:1,fontWeight:700,marginTop:5,textTransform:"uppercase"}}>{label}</div><div style={{fontSize:13,fontWeight:800,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div><div style={{fontSize:13,fontFamily:"monospace",color:valColor,fontWeight:700}}>{val}</div></div>);
+            return(<>
+              {/* ── Active tables tonight ── */}
               {nights.map(([date,games])=>(
-                <div key={date}>
+                <div key={date} style={{marginBottom:18}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                     <div style={{display:"flex",alignItems:"baseline",gap:8}}>
                       <div style={{fontSize:13,fontWeight:800,color:C.textPrimary}}>{fmtDate(date)}</div>
@@ -862,8 +878,78 @@ export default function App(){
                   </div>
                 </div>
               ))}
-            </div>
-            );
+
+              {/* ── Empty-state CTA (no game running) ── */}
+              {activeGames.length===0&&(
+                <div style={{...card,padding:"22px 18px",textAlign:"center"}}>
+                  <div style={{fontSize:40,marginBottom:8}}>🃏</div>
+                  <div style={{fontSize:14,fontWeight:700,color:C.textPrimary}}>No game running right now</div>
+                  <div style={{fontSize:11,color:C.textMuted,marginTop:3,marginBottom:14}}>Fire one up — players and stats roll in automatically.</div>
+                  <button onClick={openNew} style={{background:"linear-gradient(135deg,#b8860b,#e2b55a)",color:"#000",border:"none",borderRadius:11,padding:"13px 22px",fontWeight:900,fontSize:14,letterSpacing:0.4,cursor:"pointer"}}>🎴 Start tonight's game</button>
+                </div>
+              )}
+
+              {/* ── All-Time Leaders ── */}
+              {leaders.length>0&&(<>
+                {secLabel("🏆","All-Time Leaders")}
+                <div style={card}>
+                  {leaders.map((l,i)=>(
+                    <div key={l.p.id} onClick={()=>setShowPlayerProfile(l.p.id)}
+                      style={{display:"flex",alignItems:"center",gap:11,padding:"11px 14px",cursor:"pointer",borderBottom:i<leaders.length-1?`1px solid ${C.border}`:"none"}}>
+                      <span style={{fontSize:15,width:22,textAlign:"center",flexShrink:0}}>{medals[i]}</span>
+                      <span style={{flexShrink:0}}><PhotoCircle photo={l.p.photo} size={30} fontSize={14}/></span>
+                      <span style={{flex:1,minWidth:0,fontSize:14,fontWeight:800,color:C.textPrimary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.p.name}</span>
+                      <span style={{fontSize:11,color:C.textMuted,flexShrink:0}}>{fmtH(l.st.hours)}</span>
+                      <span style={{fontSize:16,fontWeight:900,fontFamily:"monospace",color:pColor(l.st.profit),flexShrink:0}}>{fmtMoney(l.st.profit,true)}</span>
+                    </div>
+                  ))}
+                </div>
+              </>)}
+
+              {/* ── Last Night recap ── */}
+              {lastWinner&&(<>
+                {secLabel("🕓",`Last Night · ${fmtDate(lastDate)}`)}
+                <div style={{...card,padding:"13px 14px",cursor:"pointer"}} onClick={()=>setView("archive")}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.textMuted,letterSpacing:0.5,marginBottom:11,textTransform:"uppercase"}}>
+                    <span>{lastGames.length} table{lastGames.length!==1?"s":""} · {lastPlayers} players</span>
+                    <span style={{color:C.gold,fontWeight:700}}>House {fmtMoney(lastHouse,true)}</span>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <div style={{flex:1,minWidth:0,background:C.winBg,border:`1px solid ${C.winBorder}`,borderRadius:9,padding:"9px 11px"}}>
+                      <div style={{fontSize:8,color:C.win,letterSpacing:1,fontWeight:700,textTransform:"uppercase"}}>Biggest Winner</div>
+                      <div style={{fontSize:13,fontWeight:800,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{lastWinner.name}</div>
+                      <div style={{fontSize:15,fontWeight:900,fontFamily:"monospace",color:C.win}}>{fmtMoney(lastWinner.profit,true)}</div>
+                    </div>
+                    <div style={{flex:1,minWidth:0,background:C.lossBg,border:`1px solid ${C.lossBorder}`,borderRadius:9,padding:"9px 11px"}}>
+                      <div style={{fontSize:8,color:C.loss,letterSpacing:1,fontWeight:700,textTransform:"uppercase"}}>Roughest Night</div>
+                      <div style={{fontSize:13,fontWeight:800,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{lastRough.name}</div>
+                      <div style={{fontSize:15,fontWeight:900,fontFamily:"monospace",color:C.loss}}>{fmtMoney(lastRough.profit,true)}</div>
+                    </div>
+                  </div>
+                </div>
+              </>)}
+
+              {/* ── Club by the numbers ── */}
+              {allGames.length>0&&(<>
+                {secLabel("📊","By The Numbers")}
+                <div style={{display:"flex",gap:6}}>
+                  {tile(nightDates.length,"Nights")}
+                  {tile(data.players.length,"Players")}
+                  {tile(k(clubIn),"In Play",C.gold)}
+                  {tile(k(clubIn-clubOut),"Raked",C.gold)}
+                </div>
+              </>)}
+
+              {/* ── Record book ── */}
+              {bigScore&&(<>
+                {secLabel("🏅","Record Book")}
+                <div style={{display:"flex",gap:8,paddingBottom:8}}>
+                  {mostHours&&record("⏱",C.blue,"Most Hours",mostHours.p.name,fmtH(mostHours.st.hours),C.blue)}
+                  {record("🔥",C.gold,"Biggest Score",bigScore.name,fmtMoney(bigScore.profit,true),C.win)}
+                  {bigLoss&&record("🧊",C.loss,"Biggest Loss",bigLoss.name,fmtMoney(bigLoss.profit,true),C.loss)}
+                </div>
+              </>)}
+            </>);
           })()}
         </div>
       )}
