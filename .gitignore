@@ -12,6 +12,9 @@ dist/
 .env.*
 !.env.example
 
+# Data backups — contain real player PII (names, phones, photos). NEVER commit.
+backups/
+
 # Logs
 *.log
 npm-debug.log*
