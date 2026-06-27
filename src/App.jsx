@@ -843,6 +843,17 @@ export default function App(){
             const tile=(val,label,color)=>(<div style={{flex:1,background:C.surfaceLo,border:`1px solid ${C.border}`,borderRadius:10,padding:"9px 4px",textAlign:"center",minWidth:0}}><div style={{fontSize:15,fontWeight:800,color:color||C.textPrimary,fontFamily:"monospace"}}>{val}</div><div style={{fontSize:8,color:C.textMuted,letterSpacing:0.5,marginTop:2,textTransform:"uppercase"}}>{label}</div></div>);
             const record=(icon,iconColor,label,name,val,valColor)=>(<div style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:"11px",minWidth:0}}><div style={{fontSize:15,color:iconColor}}>{icon}</div><div style={{fontSize:8,color:C.textMuted,letterSpacing:1,fontWeight:700,marginTop:5,textTransform:"uppercase"}}>{label}</div><div style={{fontSize:13,fontWeight:800,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div><div style={{fontSize:13,fontFamily:"monospace",color:valColor,fontWeight:700}}>{val}</div></div>);
             return(<>
+              {/* ── Club by the numbers ── */}
+              {allGames.length>0&&(<>
+                {secLabel("📊","By The Numbers")}
+                <div style={{display:"flex",gap:6,marginBottom:4}}>
+                  {tile(nightDates.length,"Nights")}
+                  {tile(data.players.length,"Players")}
+                  {tile(k(clubIn),"In Play",C.gold)}
+                  {tile(k(clubIn-clubOut),"Raked",C.gold)}
+                </div>
+              </>)}
+
               {/* ── Active tables tonight ── */}
               {nights.map(([date,games])=>(
                 <div key={date} style={{marginBottom:18}}>
@@ -908,7 +919,7 @@ export default function App(){
 
               {/* ── Last Night recap ── */}
               {lastWinner&&(<>
-                {secLabel("🕓",`Last Night · ${fmtDate(lastDate)}`)}
+                {secLabel("🕓",`Most Recent · ${fmtDate(lastDate)}`)}
                 <div style={{...card,padding:"13px 14px",cursor:"pointer"}} onClick={()=>setView("archive")}>
                   <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.textMuted,letterSpacing:0.5,marginBottom:11,textTransform:"uppercase"}}>
                     <span>{lastGames.length} table{lastGames.length!==1?"s":""} · {lastPlayers} players</span>
@@ -926,17 +937,6 @@ export default function App(){
                       <div style={{fontSize:15,fontWeight:900,fontFamily:"monospace",color:C.loss}}>{fmtMoney(lastRough.profit,true)}</div>
                     </div>
                   </div>
-                </div>
-              </>)}
-
-              {/* ── Club by the numbers ── */}
-              {allGames.length>0&&(<>
-                {secLabel("📊","By The Numbers")}
-                <div style={{display:"flex",gap:6}}>
-                  {tile(nightDates.length,"Nights")}
-                  {tile(data.players.length,"Players")}
-                  {tile(k(clubIn),"In Play",C.gold)}
-                  {tile(k(clubIn-clubOut),"Raked",C.gold)}
                 </div>
               </>)}
 
