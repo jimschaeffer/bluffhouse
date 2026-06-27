@@ -469,7 +469,7 @@ export default function App(){
   // ── Player lifetime stats ──────────────────────────────────────────────────
   function playerLifetimeStats(playerId, filterMonth=null){
     const name = data.players.find(p=>p.id===playerId)?.name||"";
-    let sessions=0,totalIn=0,totalOut=0,profit=0,hours=0,points=0,wins=0,losses=0;
+    let sessions=0,totalIn=0,totalOut=0,profit=0,hours=0,points=0,wins=0,losses=0,lastPlayed="";
     data.games.forEach(g=>{
       if(filterMonth && mKey(g.date)!==filterMonth) return;
       seatedAll(g).filter(s=>s.name&&(s.playerId===playerId||s.name.toLowerCase()===name.toLowerCase())).forEach(s=>{
@@ -478,9 +478,10 @@ export default function App(){
         sessions++; totalIn+=ti; if(s.cashOut) totalOut+=to;
         if(pr!==null){ profit+=pr; if(pr>0)wins++; else losses++; }
         if(hrs){ hours+=hrs; points+=calcPoints(hrs); }
+        if(g.date&&g.date>lastPlayed) lastPlayed=g.date;
       });
     });
-    return{sessions,totalIn,totalOut,profit,hours,points,wins,losses};
+    return{sessions,totalIn,totalOut,profit,hours,points,wins,losses,lastPlayed};
   }
 
   const months=[...new Set(data.games.map(g=>mKey(g.date)).filter(Boolean))].sort().reverse();
@@ -890,8 +891,11 @@ export default function App(){
             let rows=data.players.map(p=>({p,stats:playerLifetimeStats(p.id),mStats:playerLifetimeStats(p.id,mKey(todayDate()))}));
             if(q) rows=rows.filter(({p})=>(p.name||"").toLowerCase().includes(q)||(qDigits&&(p.phone||"").replace(/\D/g,"").includes(qDigits)));
             rows.sort((a,b)=>{
-              if(pSort==="earnings") return b.stats.profit-a.stats.profit;
-              if(pSort==="sessions") return b.stats.sessions-a.stats.sessions;
+              if(pSort==="profitDesc") return b.stats.profit-a.stats.profit;
+              if(pSort==="profitAsc")  return a.stats.profit-b.stats.profit;
+              if(pSort==="sessions")   return b.stats.sessions-a.stats.sessions;
+              if(pSort==="hours")      return b.stats.hours-a.stats.hours;
+              if(pSort==="lastPlayed") return (b.stats.lastPlayed||"").localeCompare(a.stats.lastPlayed||""); // most recent first, never-played last
               const an=(a.p.name||"").trim(), bn=(b.p.name||"").trim();
               if(!an!==!bn) return an?-1:1;   // unnamed players sort to the end
               return an.localeCompare(bn,undefined,{sensitivity:"base"});
@@ -910,8 +914,11 @@ export default function App(){
                 <select value={pSort} onChange={e=>setPSort(e.target.value)}
                   style={{...ctrlStyle,padding:"10px 12px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>
                   <option value="name">Name A–Z</option>
-                  <option value="earnings">Career $</option>
+                  <option value="profitDesc">P&amp;L: High → Low</option>
+                  <option value="profitAsc">P&amp;L: Low → High</option>
                   <option value="sessions">Sessions</option>
+                  <option value="hours">Hours Played</option>
+                  <option value="lastPlayed">Last Played</option>
                 </select>
               </div>
               <div style={{fontSize:10,color:C.textMuted,letterSpacing:1,marginBottom:10,textTransform:"uppercase"}}>
