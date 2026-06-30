@@ -129,6 +129,15 @@ const EMPTY_PLAYER= ()   => ({id:uid(),name:"",photo:"",phone:""});
 // for games created before this feature, so existing data is unaffected.)
 const seatedAll = g => [...g.seats.filter(s=>s.name), ...(g.closedSeats||[])];
 
+// Total a player took on credit (un-paid chips): credit buy-in + any credit add-ons.
+// At cash-out they owe the house this credit minus the chips they cash out.
+const seatCredit = s => {
+  let c=0;
+  if((s.buyInStatus||"paid")==="credit") c+=parseFloat(s.buyIn||0)||0;
+  (s.rebuys||[]).forEach((r,i)=>{ if(((s.rebuyStatuses||[])[i]||"paid")==="credit") c+=parseFloat(r||0)||0; });
+  return c;
+};
+
 const SK = "bluffhouse_v6";
 function load(){
   try{ const r=localStorage.getItem(SK); if(r) return JSON.parse(r); } catch(_){}
@@ -519,11 +528,6 @@ export default function App(){
   return(
     <div style={{minHeight:"100vh",background:C.bg,color:C.textPrimary,fontFamily:"'Inter','Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column",fontSize:13}}>
       <style>{`
-        @keyframes creditFlash {
-          0%,100% { opacity:1; color:#e8ff00; text-shadow: 0 0 8px #e8ff00, 0 0 20px #e8ff00, 0 0 40px #e8ff00, 0 0 60px #ccee00; }
-          50% { opacity:0.1; color:#e8ff00; text-shadow: none; }
-        }
-        .credit-flash { animation: creditFlash 2.2s ease-in-out infinite; color:#e8ff00 !important; font-weight:900 !important; font-size:26px !important; }
         input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; }
         @keyframes syncPulse { 0%,100% { opacity:1; } 50% { opacity:0.25; } }
         .navtabs::-webkit-scrollbar { display:none; }
@@ -1477,6 +1481,9 @@ export default function App(){
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:13,fontWeight:700,color:C.textPrimary}}>{p.name}</div>
                             <div style={{fontSize:10,color:C.win,fontWeight:700,letterSpacing:0.5}}>✓ Closed Out · in {fmtMoney(totalIn)}</div>
+                            {(()=>{ const credit=seatCredit(p); if(credit<=0) return null; const owes=credit-(parseFloat(p.cashOut||0)||0);
+                              return <div style={{fontSize:10,fontWeight:700,marginTop:1,color:owes>0.005?"#f59e0b":owes<-0.005?C.win:C.textMuted}}>💳 {owes>0.005?`Owes house ${fmtMoney(owes)}`:owes<-0.005?`House paid ${fmtMoney(-owes)}`:"Credit settled"}</div>;
+                            })()}
                           </div>
                           {profit!==null&&(
                             <div style={{textAlign:"right",flexShrink:0}}>
@@ -1499,8 +1506,8 @@ export default function App(){
                             </div>
                             <div style={{textAlign:"right"}}>
                               <div style={{fontSize:9,color:C.textMuted,textTransform:"uppercase",letterSpacing:1,marginBottom:3}}>Total Bought In</div>
-                              <div className={hasCredit?"credit-flash":""} style={{fontSize:hasCredit?22:16,fontWeight:800,fontFamily:"monospace",color:hasCredit?"#e8ff00":C.textPrimary}}>
-                                {fmtMoney(totalIn)}{hasCredit&&" ⚠"}
+                              <div style={{fontSize:16,fontWeight:800,fontFamily:"monospace",color:C.textPrimary}}>
+                                {fmtMoney(totalIn)}
                               </div>
                             </div>
                           </div>
@@ -1608,6 +1615,22 @@ export default function App(){
                               </div>
                             )}
                           </div>
+                          {/* Credit settle-up: what the player owes the house (credit − chips) */}
+                          {(()=>{ const credit=seatCredit(p); if(credit<=0) return null;
+                            const co=parseFloat(p.cashOut||0)||0; const owes=credit-co;
+                            return(
+                              <div style={{marginTop:12,borderRadius:10,border:"1.5px solid rgba(245,158,11,0.45)",background:"rgba(245,158,11,0.08)",padding:"11px 14px"}}>
+                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
+                                  <span style={{fontSize:10,fontWeight:800,color:"#f59e0b",textTransform:"uppercase",letterSpacing:1}}>💳 Credit Settle</span>
+                                  <span style={{fontSize:11,color:C.textSecondary,fontFamily:"monospace"}}>{fmtMoney(credit)} credit − {fmtMoney(co)} chips</span>
+                                </div>
+                                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+                                  <span style={{fontSize:12,fontWeight:700,color:C.textPrimary}}>{owes>0.005?"Player owes house":owes<-0.005?"House pays player":"Settled up"}</span>
+                                  <span style={{fontFamily:"monospace",fontWeight:900,fontSize:22,color:owes>0.005?"#f59e0b":owes<-0.005?C.win:C.textSecondary,textShadow:owes>0.005?"0 0 12px rgba(245,158,11,0.5)":"none"}}>{fmtMoney(Math.abs(owes))}</span>
+                                </div>
+                              </div>
+                            );
+                          })()}
                           {/* Cash out & free the seat */}
                           <div style={{display:"flex",gap:8,marginTop:12}}>
                             <button
@@ -1665,6 +1688,15 @@ export default function App(){
                       <span style={{fontSize:12,color:C.textSecondary}}>Food Cost</span>
                       <span style={{fontFamily:"monospace",fontSize:13,fontWeight:700,color:C.loss}}>− {fmtMoney(s.food)}</span>
                     </div>
+                    {(()=>{ const collect=activePlayers.reduce((sum,p)=>sum+Math.max(0,seatCredit(p)-(parseFloat(p.cashOut||0)||0)),0);
+                      if(collect<=0.005) return null;
+                      return(
+                        <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid rgba(226,181,90,0.12)`}}>
+                          <span style={{fontSize:12,color:"#f59e0b",fontWeight:600}}>💳 Credit to Collect</span>
+                          <span style={{fontFamily:"monospace",fontSize:13,fontWeight:800,color:"#f59e0b"}}>{fmtMoney(collect)}</span>
+                        </div>
+                      );
+                    })()}
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:12,marginTop:4}}>
                       <span style={{fontSize:13,fontWeight:800,color:C.gold}}>Bluff House Final Profit</span>
                       <span style={{fontFamily:"monospace",fontSize:26,fontWeight:900,color:pColor(finalProfit)}}>{fmtMoney(finalProfit,true)}</span>
