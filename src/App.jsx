@@ -415,6 +415,24 @@ export default function App(){
       };
     })}));
   }
+  // Buy back in: re-seat a cashed-out player for a fresh sit-down (new session). The
+  // earlier closed session stays on the books — the two legs sum to the night's net.
+  function buyBackIn(gId,closedId){
+    const g=data.games.find(x=>x.id===gId);
+    const closed=(g?.closedSeats||[]).find(s=>s.id===closedId);
+    const target=g?.seats.find(s=>!s.name);
+    if(!closed) return;
+    if(!target){ alert("Table is full — free a seat for the buy-back-in."); return; }
+    setData(d=>({...d,games:d.games.map(gm=>{
+      if(gm.id!==gId) return gm;
+      return {...gm, seats:gm.seats.map(s=>s.seat===target.seat?{
+        ...EMPTY_SEAT(target.seat), id:s.id,
+        name:closed.name, photo:closed.photo||"", phone:closed.phone||"", playerId:closed.playerId||null,
+      }:s)};
+    })}));
+    upGame(gId,{_sub:"table"});
+    setSel(target.seat);
+  }
   // Transfer a live player to an open seat at another table the same night.
   // Their full record (buy-ins, time-in, identity) moves with them — one session.
   function transferSeat(fromGid,sn,toGid){
@@ -1490,8 +1508,12 @@ export default function App(){
                               <div style={{fontSize:15,fontWeight:900,fontFamily:"monospace",color:win?C.win:C.loss}}>{win?"+":""}{fmtMoney(profit)}</div>
                             </div>
                           )}
-                          <button onClick={()=>reopenSeat(game.id,p.id)} disabled={game.closedOut}
-                            style={{flexShrink:0,padding:"7px 12px",background:"rgba(226,181,90,0.12)",color:C.gold,border:`1.5px solid ${C.goldGlow}`,borderRadius:8,fontWeight:700,fontSize:11,cursor:game.closedOut?"default":"pointer",opacity:game.closedOut?0.4:1}}>✎ Edit</button>
+                          <div style={{flexShrink:0,display:"flex",flexDirection:"column",gap:5}}>
+                            <button onClick={()=>buyBackIn(game.id,p.id)} disabled={game.closedOut} title="Re-seat this player for a new sit-down — both sessions sum to the night's net"
+                              style={{padding:"6px 10px",background:C.goldFaint,color:C.gold,border:`1.5px solid ${C.goldGlow}`,borderRadius:8,fontWeight:700,fontSize:11,cursor:game.closedOut?"default":"pointer",opacity:game.closedOut?0.4:1,whiteSpace:"nowrap"}}>↻ Buy Back In</button>
+                            <button onClick={()=>reopenSeat(game.id,p.id)} disabled={game.closedOut}
+                              style={{padding:"6px 10px",background:C.surfaceHi,color:C.textSecondary,border:`1px solid ${C.border}`,borderRadius:8,fontWeight:700,fontSize:11,cursor:game.closedOut?"default":"pointer",opacity:game.closedOut?0.4:1,whiteSpace:"nowrap"}}>✎ Edit</button>
+                          </div>
                         </div>
                       );
                       return(
