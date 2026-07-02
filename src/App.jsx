@@ -345,11 +345,15 @@ export default function App(){
 
   const game = data.games.find(g=>g.id===gid)||null;
   const sub  = game?._sub||"table";
+  // A closed-out game is locked by default (finalized results protected) until unlocked.
+  const gameLocked = !!game && game.closedOut && game.locked!==false;
   const ss   = game?.seats.find(s=>s.seat===sel)||null;
 
   // ── Data helpers ────────────────────────────────────────────────────────────
-  function upGame(id,f){ setData(d=>({...d,games:d.games.map(g=>g.id===id?{...g,...f}:g)})); }
-  function upSeat(gId,sn,f){ setData(d=>({...d,games:d.games.map(g=>{ if(g.id!==gId)return g; return{...g,seats:g.seats.map(s=>s.seat===sn?{...s,...f}:s)}; })})); }
+  const isLocked = id => { const g=data.games.find(x=>x.id===id); return !!g && g.closedOut && g.locked!==false; };
+  // upGame blocks edits to a locked game, but always allows _sub (tab switch) and locked (the toggle).
+  function upGame(id,f){ if(isLocked(id) && !("_sub" in f) && !("locked" in f)) return; setData(d=>({...d,games:d.games.map(g=>g.id===id?{...g,...f}:g)})); }
+  function upSeat(gId,sn,f){ if(isLocked(gId)) return; setData(d=>({...d,games:d.games.map(g=>{ if(g.id!==gId)return g; return{...g,seats:g.seats.map(s=>s.seat===sn?{...s,...f}:s)}; })})); }
   function upPlayer(pid,f){ setData(d=>({...d,players:d.players.map(p=>p.id===pid?{...p,...f}:p)})); }
 
   function openNew(){ setDraftName(""); setDraftDate(todayDate()); setDraftGameType("1-3-nl"); setShowNew(true); }
@@ -378,7 +382,7 @@ export default function App(){
     upSeat(gId,sn,{rebuys:r,rebuyStatuses:rs});
   }
   function closeoutGame(gameId){
-    setData(d=>({...d,games:d.games.map(g=>g.id===gameId?{...g,archived:true,closedOut:true,closedAt:new Date().toISOString()}:g)}));
+    setData(d=>({...d,games:d.games.map(g=>g.id===gameId?{...g,archived:true,closedOut:true,locked:true,closedAt:new Date().toISOString()}:g)}));
     setView("archive");
     setGid(null);
     setSel(null);
@@ -1097,11 +1101,11 @@ export default function App(){
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <Btn variant="ghost" style={{padding:"5px 10px",fontSize:11}} onClick={()=>{setView("games");setSel(null);}}>← Back</Btn>
               <div>
-                <input value={game.name||""} onChange={e=>upGame(game.id,{name:e.target.value})} placeholder="Game name..."
-                  style={{background:"transparent",border:"none",color:C.textPrimary,fontSize:13,fontWeight:800,outline:"none",cursor:"text",padding:0,width:180,letterSpacing:0.3}}/>
+                <input value={game.name||""} onChange={e=>upGame(game.id,{name:e.target.value})} placeholder="Game name..." disabled={gameLocked}
+                  style={{background:"transparent",border:"none",color:C.textPrimary,fontSize:13,fontWeight:800,outline:"none",cursor:gameLocked?"default":"text",padding:0,width:180,letterSpacing:0.3}}/>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginTop:1}}>
-                  <input type="date" value={game.date} onChange={e=>upGame(game.id,{date:e.target.value})}
-                    style={{background:"transparent",border:"none",color:C.textMuted,fontSize:10,outline:"none",cursor:"pointer",padding:0}}/>
+                  <input type="date" value={game.date} onChange={e=>upGame(game.id,{date:e.target.value})} disabled={gameLocked}
+                    style={{background:"transparent",border:"none",color:C.textMuted,fontSize:10,outline:"none",cursor:gameLocked?"default":"pointer",padding:0}}/>
                   <span style={{fontSize:10,color:C.gold,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>
                     · {{"1-3-nl":"1/3 NL","2-5-nl":"2/5 NL","5-10-nl":"5/10 NL","roe-5":"ROE 5"}[game.gameType]||"1/3 NL"}
                   </span>
@@ -1117,6 +1121,22 @@ export default function App(){
               ))}
             </div>
           </div>
+
+          {/* ── Lock / unlock bar (closed-out games only) ── */}
+          {game.closedOut&&(
+            <div onClick={()=>upGame(game.id,{locked:!gameLocked})}
+              style={{cursor:"pointer",padding:"9px 16px",background:gameLocked?"rgba(226,181,90,0.08)":"rgba(255,96,96,0.09)",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+              <span style={{fontSize:11,fontWeight:700,color:gameLocked?C.gold:C.loss}}>
+                {gameLocked?"🔒 Locked — finalized, protected from edits":"🔓 Unlocked — edits change finalized results"}
+              </span>
+              <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:gameLocked?C.gold:C.loss,border:`1px solid ${gameLocked?C.goldGlow:C.lossBorder}`,borderRadius:6,padding:"3px 9px",whiteSpace:"nowrap"}}>
+                {gameLocked?"Tap to unlock":"Tap to lock"}
+              </span>
+            </div>
+          )}
+
+          {/* Locked games are read-only — block interaction with all tab content below */}
+          <div style={{flex:1,display:"flex",flexDirection:"column",pointerEvents:gameLocked?"none":"auto"}}>
 
           {/* ── TABLE tab ── */}
           {sub==="table"&&(
@@ -1758,6 +1778,7 @@ export default function App(){
               </div>
             );
           })()}
+          </div>
         </div>
       )}
 
