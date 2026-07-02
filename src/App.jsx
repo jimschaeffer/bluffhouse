@@ -1509,10 +1509,10 @@ export default function App(){
                             </div>
                           )}
                           <div style={{flexShrink:0,display:"flex",flexDirection:"column",gap:5}}>
-                            <button onClick={()=>buyBackIn(game.id,p.id)} disabled={game.closedOut} title="Re-seat this player for a new sit-down — both sessions sum to the night's net"
-                              style={{padding:"6px 10px",background:C.goldFaint,color:C.gold,border:`1.5px solid ${C.goldGlow}`,borderRadius:8,fontWeight:700,fontSize:11,cursor:game.closedOut?"default":"pointer",opacity:game.closedOut?0.4:1,whiteSpace:"nowrap"}}>↻ Buy Back In</button>
-                            <button onClick={()=>reopenSeat(game.id,p.id)} disabled={game.closedOut}
-                              style={{padding:"6px 10px",background:C.surfaceHi,color:C.textSecondary,border:`1px solid ${C.border}`,borderRadius:8,fontWeight:700,fontSize:11,cursor:game.closedOut?"default":"pointer",opacity:game.closedOut?0.4:1,whiteSpace:"nowrap"}}>✎ Edit</button>
+                            <button onClick={()=>buyBackIn(game.id,p.id)} title="Re-seat this player for a new sit-down — both sessions sum to the night's net"
+                              style={{padding:"6px 10px",background:C.goldFaint,color:C.gold,border:`1.5px solid ${C.goldGlow}`,borderRadius:8,fontWeight:700,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>↻ Buy Back In</button>
+                            <button onClick={()=>reopenSeat(game.id,p.id)}
+                              style={{padding:"6px 10px",background:C.surfaceHi,color:C.textSecondary,border:`1px solid ${C.border}`,borderRadius:8,fontWeight:700,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>✎ Edit</button>
                           </div>
                         </div>
                       );
@@ -1657,12 +1657,10 @@ export default function App(){
                           <div style={{display:"flex",gap:8,marginTop:12}}>
                             <button
                               onClick={()=>{ savePlayerToRegistry(p); closeOutSeat(game.id,p.seat); }}
-                              disabled={game.closedOut}
                               style={{
                                 flex:1, padding:"10px",
                                 background:C.win, color:"#000", border:`1px solid ${C.win}`,
-                                borderRadius:9, fontWeight:800, fontSize:12, cursor:game.closedOut?"default":"pointer",
-                                opacity:game.closedOut?0.4:1,
+                                borderRadius:9, fontWeight:800, fontSize:12, cursor:"pointer",
                                 display:"flex", alignItems:"center", justifyContent:"center", gap:6,
                                 transition:"all 0.2s",
                               }}>
