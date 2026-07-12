@@ -137,6 +137,12 @@ const seatCredit = s => {
   (s.rebuys||[]).forEach((r,i)=>{ if(((s.rebuyStatuses||[])[i]||"paid")==="credit") c+=parseFloat(r||0)||0; });
   return c;
 };
+// Credit owed after chips are applied at cash-out, then reduced by any payments recorded.
+const seatOwed      = s => Math.max(0, seatCredit(s) - (parseFloat(s.cashOut||0)||0));   // owed after cash-out
+const seatCreditPaid= s => (s.creditPayments||[]).reduce((a,p)=>a+(parseFloat(p.amount||0)||0),0);
+const seatRemaining = s => Math.max(0, seatOwed(s) - seatCreditPaid(s));                 // still owed
+const manualPaid    = c => (c.payments||[]).reduce((a,p)=>a+(parseFloat(p.amount||0)||0),0);
+const manualRemaining = c => Math.max(0, (parseFloat(c.amount||0)||0) - manualPaid(c));
 
 const SK = "bluffhouse_v6";
 function load(){
@@ -258,6 +264,16 @@ export default function App(){
   const [pSearch,setPSearch]       = useState("");        // roster search query
   const [pSort,setPSort]           = useState("name");    // roster sort: name | earnings | sessions
   const [transferFrom,setTransferFrom] = useState(null);  // {gid,seat} → transfer picker open
+  const [creditPay,setCreditPay]   = useState(null);      // {kind,label,remaining,...ref} → payment modal
+  const [payAmt,setPayAmt]         = useState("");
+  const [payDate,setPayDate]       = useState("");
+  const [payNote,setPayNote]       = useState("");
+  const [addCredit,setAddCredit]   = useState(null);      // {} → add-manual-credit modal open
+  const [acName,setAcName]         = useState("");
+  const [acPlayerId,setAcPlayerId] = useState(null);
+  const [acAmt,setAcAmt]           = useState("");
+  const [acDate,setAcDate]         = useState("");
+  const [acNote,setAcNote]         = useState("");
 
   // ── Shared sync state ─────────────────────────────────────────────────────────
   const [authed,setAuthed]   = useState(()=>!!localStorage.getItem(PASS_KEY));
@@ -461,6 +477,57 @@ export default function App(){
     const g={...EMPTY_GAME(),date:first.date||todayDate(),gameType:first.gameType||"1-3-nl",name:`${base} · Table ${nightGames.length+1}`};
     setData(d=>({...d,games:[...d.games,g]}));
     setGid(g.id); setSel(null); setView("game");
+  }
+
+  // ── Credit payments & manual credit entries ────────────────────────────────
+  // Record a payment against a seat's game credit. Not blocked by the game lock —
+  // collecting a debt isn't editing the finalized result.
+  function payCreditSeat(gameId,seatId,payment){
+    setData(d=>({...d,games:d.games.map(g=>{
+      if(g.id!==gameId) return g;
+      const add = arr => arr.map(s=> s.id===seatId ? {...s,creditPayments:[...(s.creditPayments||[]),payment]} : s);
+      return {...g, seats:add(g.seats), closedSeats:add(g.closedSeats||[])};
+    })}));
+  }
+  function removeCreditSeatPayment(gameId,seatId,payId){
+    setData(d=>({...d,games:d.games.map(g=>{
+      if(g.id!==gameId) return g;
+      const rm = arr => arr.map(s=> s.id===seatId ? {...s,creditPayments:(s.creditPayments||[]).filter(p=>p.id!==payId)} : s);
+      return {...g, seats:rm(g.seats), closedSeats:rm(g.closedSeats||[])};
+    })}));
+  }
+  function addManualCredit(entry){ setData(d=>({...d,credits:[...(d.credits||[]),entry]})); }
+  function removeManualCredit(id){ setData(d=>({...d,credits:(d.credits||[]).filter(c=>c.id!==id)})); }
+  function payManualCredit(id,payment){ setData(d=>({...d,credits:(d.credits||[]).map(c=>c.id===id?{...c,payments:[...(c.payments||[]),payment]}:c)})); }
+  function removeManualPayment(id,payId){ setData(d=>({...d,credits:(d.credits||[]).map(c=>c.id===id?{...c,payments:(c.payments||[]).filter(p=>p.id!==payId)}:c)})); }
+
+  // Aggregate every player's outstanding credit: unpaid game credit + manual entries.
+  function creditSummary(){
+    const byKey={};
+    const ensure=(key,name,playerId,photo)=>{
+      if(!byKey[key]) byKey[key]={key,name:name||"—",playerId:playerId||null,photo:photo||"",games:[],manual:[],gameRemaining:0,manualRemaining:0};
+      return byKey[key];
+    };
+    data.games.forEach(g=>seatedAll(g).forEach(s=>{
+      if(seatCredit(s)<=0) return;
+      const key=s.playerId||s.name.trim().toLowerCase();
+      const e=ensure(key,s.name.trim(),s.playerId,s.photo);
+      const rem=seatRemaining(s);
+      e.games.push({gameId:g.id,gameName:g.name||"Poker Night",date:g.date,seatId:s.id,credit:seatCredit(s),owed:seatOwed(s),paid:seatCreditPaid(s),remaining:rem,payments:s.creditPayments||[]});
+      e.gameRemaining+=rem;
+      if(!e.photo&&s.photo) e.photo=s.photo;
+    }));
+    (data.credits||[]).forEach(c=>{
+      const key=c.playerId||(c.name||"").trim().toLowerCase();
+      const e=ensure(key,(c.name||"").trim(),c.playerId,"");
+      e.manual.push({id:c.id,amount:parseFloat(c.amount||0)||0,date:c.date,note:c.note,paid:manualPaid(c),remaining:manualRemaining(c),payments:c.payments||[]});
+      e.manualRemaining+=manualRemaining(c);
+    });
+    return Object.values(byKey).map(e=>{
+      if(!e.photo&&e.playerId){ const p=data.players.find(x=>x.id===e.playerId); if(p) e.photo=p.photo||""; }
+      e.totalRemaining=e.gameRemaining+e.manualRemaining;
+      return e;
+    }).sort((a,b)=>b.totalRemaining-a.totalRemaining);
   }
 
   // Load a registered player into a seat
@@ -670,6 +737,105 @@ export default function App(){
       })()}
 
       {/* ── Player Picker Modal ── */}
+      {/* ── Record Credit Payment Modal ── */}
+      {creditPay&&(()=>{
+        let owed=0,paid=0,remaining=0,payments=[];
+        if(creditPay.kind==="seat"){
+          const g=data.games.find(x=>x.id===creditPay.gameId);
+          const s=g?seatedAll(g).find(x=>x.id===creditPay.seatId):null;
+          if(!s) return null;
+          owed=seatOwed(s); paid=seatCreditPaid(s); remaining=seatRemaining(s); payments=s.creditPayments||[];
+        } else {
+          const c=(data.credits||[]).find(x=>x.id===creditPay.entryId);
+          if(!c) return null;
+          owed=parseFloat(c.amount||0)||0; paid=manualPaid(c); remaining=manualRemaining(c); payments=c.payments||[];
+        }
+        const inp={width:"100%",background:C.surfaceLo,border:`1.5px solid ${C.border}`,borderRadius:9,padding:"10px 12px",color:C.textPrimary,fontSize:14,fontWeight:600,outline:"none",boxSizing:"border-box",fontFamily:"inherit",colorScheme:"dark"};
+        const submit=()=>{ const amt=parseFloat(payAmt||0)||0; if(amt<=0) return;
+          const payment={id:uid(),amount:String(amt),date:payDate||todayDate(),note:payNote.trim()};
+          if(creditPay.kind==="seat") payCreditSeat(creditPay.gameId,creditPay.seatId,payment); else payManualCredit(creditPay.entryId,payment);
+          setPayAmt(""); setPayNote(""); };
+        const rmPay=pid=>{ if(creditPay.kind==="seat") removeCreditSeatPayment(creditPay.gameId,creditPay.seatId,pid); else removeManualPayment(creditPay.entryId,pid); };
+        return(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:320,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:18,width:"min(94vw,420px)",maxHeight:"85vh",overflow:"hidden",boxShadow:"0 24px 80px #000",display:"flex",flexDirection:"column"}}>
+              <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+                <div>
+                  <div style={{fontSize:15,fontWeight:800,color:C.textPrimary}}>Record Payment</div>
+                  <div style={{fontSize:11,color:C.textSecondary,marginTop:2}}>{creditPay.name}{creditPay.sub?` · ${creditPay.sub}`:""}</div>
+                </div>
+                <button onClick={()=>setCreditPay(null)} style={{background:"none",border:"none",color:C.textMuted,fontSize:20,cursor:"pointer"}}>×</button>
+              </div>
+              <div style={{overflowY:"auto",padding:"14px 18px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",background:C.surfaceLo,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:14}}>
+                  <div style={{textAlign:"center",flex:1}}><div style={{fontSize:9,color:C.textMuted,textTransform:"uppercase",letterSpacing:1}}>Owed</div><div style={{fontFamily:"monospace",fontWeight:800,fontSize:14,color:C.textPrimary}}>{fmtMoney(owed)}</div></div>
+                  <div style={{textAlign:"center",flex:1}}><div style={{fontSize:9,color:C.textMuted,textTransform:"uppercase",letterSpacing:1}}>Paid</div><div style={{fontFamily:"monospace",fontWeight:800,fontSize:14,color:C.win}}>{fmtMoney(paid)}</div></div>
+                  <div style={{textAlign:"center",flex:1}}><div style={{fontSize:9,color:C.textMuted,textTransform:"uppercase",letterSpacing:1}}>Remaining</div><div style={{fontFamily:"monospace",fontWeight:900,fontSize:14,color:remaining>0.005?"#f59e0b":C.win}}>{fmtMoney(remaining)}</div></div>
+                </div>
+                {payments.length>0&&(
+                  <div style={{marginBottom:14}}>
+                    <div style={{fontSize:9,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:1.5,marginBottom:6}}>Payments</div>
+                    {payments.map(p=>(
+                      <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:C.surfaceLo,borderRadius:8,marginBottom:5}}>
+                        <span style={{fontFamily:"monospace",fontWeight:700,color:C.win,fontSize:13}}>{fmtMoney(p.amount)}</span>
+                        <span style={{fontSize:10,color:C.textMuted}}>{fmtDate(p.date)}</span>
+                        {p.note&&<span style={{fontSize:10,color:C.textSecondary,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>· {p.note}</span>}
+                        <button onClick={()=>rmPay(p.id)} style={{marginLeft:"auto",background:"none",border:"none",color:C.textMuted,fontSize:15,cursor:"pointer",flexShrink:0}}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{fontSize:9,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:1.5,marginBottom:6}}>New Payment</div>
+                <div style={{display:"flex",gap:8,marginBottom:8}}>
+                  <div style={{position:"relative",flex:1}}>
+                    <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:C.gold,fontWeight:700,fontSize:14,pointerEvents:"none"}}>$</span>
+                    <input type="number" value={payAmt} onChange={e=>setPayAmt(e.target.value)} placeholder="0" style={{...inp,paddingLeft:26}}/>
+                  </div>
+                  <input type="date" value={payDate} onChange={e=>setPayDate(e.target.value)} style={{...inp,flex:1}}/>
+                </div>
+                <input value={payNote} onChange={e=>setPayNote(e.target.value)} placeholder="Note (optional) — e.g. Venmo, cash…" style={{...inp,fontSize:13,marginBottom:12}}/>
+                <button onClick={submit} disabled={!(parseFloat(payAmt||0)>0)} style={{width:"100%",background:C.win,color:"#000",border:"none",borderRadius:10,padding:"12px",fontWeight:800,fontSize:14,cursor:parseFloat(payAmt||0)>0?"pointer":"default",opacity:parseFloat(payAmt||0)>0?1:0.5}}>Record Payment</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Add Manual Credit Modal ── */}
+      {addCredit&&(()=>{
+        const inp={width:"100%",background:C.surfaceLo,border:`1.5px solid ${C.border}`,borderRadius:9,padding:"10px 12px",color:C.textPrimary,fontSize:14,fontWeight:600,outline:"none",boxSizing:"border-box",fontFamily:"inherit",colorScheme:"dark"};
+        const nm=acName.trim(), amt=parseFloat(acAmt||0)||0, valid=nm&&amt>0;
+        const submit=()=>{ if(!valid) return;
+          const match=data.players.find(p=>p.name.trim().toLowerCase()===nm.toLowerCase());
+          addManualCredit({id:uid(),playerId:match?match.id:null,name:nm,amount:String(amt),date:acDate||todayDate(),note:acNote.trim(),payments:[]});
+          setAddCredit(null); };
+        const roster=[...data.players].filter(p=>p.name).sort((a,b)=>a.name.localeCompare(b.name));
+        return(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:320,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:18,width:"min(94vw,420px)",boxShadow:"0 24px 80px #000"}}>
+              <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{fontSize:15,fontWeight:800,color:C.textPrimary}}>Add Credit</div>
+                <button onClick={()=>setAddCredit(null)} style={{background:"none",border:"none",color:C.textMuted,fontSize:20,cursor:"pointer"}}>×</button>
+              </div>
+              <div style={{padding:"14px 18px"}}>
+                <div style={{fontSize:9,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:1.5,marginBottom:6}}>Player</div>
+                <input list="ac-roster" value={acName} onChange={e=>setAcName(e.target.value)} placeholder="Name (existing or new)" style={{...inp,marginBottom:12}}/>
+                <datalist id="ac-roster">{roster.map(p=><option key={p.id} value={p.name}/>)}</datalist>
+                <div style={{display:"flex",gap:8,marginBottom:12}}>
+                  <div style={{position:"relative",flex:1}}>
+                    <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:C.gold,fontWeight:700,fontSize:14,pointerEvents:"none"}}>$</span>
+                    <input type="number" value={acAmt} onChange={e=>setAcAmt(e.target.value)} placeholder="0" style={{...inp,paddingLeft:26}}/>
+                  </div>
+                  <input type="date" value={acDate} onChange={e=>setAcDate(e.target.value)} style={{...inp,flex:1}}/>
+                </div>
+                <input value={acNote} onChange={e=>setAcNote(e.target.value)} placeholder="Note (optional)" style={{...inp,fontSize:13,marginBottom:14}}/>
+                <button onClick={submit} disabled={!valid} style={{width:"100%",background:C.gold,color:"#000",border:"none",borderRadius:10,padding:"12px",fontWeight:800,fontSize:14,cursor:valid?"pointer":"default",opacity:valid?1:0.5}}>Add Credit</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── Transfer Player Modal ── */}
       {transferFrom&&(()=>{
         const src=data.games.find(g=>g.id===transferFrom.gid);
@@ -825,7 +991,7 @@ export default function App(){
               ); })()}
           </div>
           <div className="navtabs" style={{display:"flex",gap:4,overflowX:"auto",scrollbarWidth:"none"}}>
-            {[["games","Games"],["stats","Stats"],["archive","Archive"],["roster","Players"],["monthly","Monthly"]].map(([v,l])=>(
+            {[["games","Games"],["stats","Stats"],["credit","Credit"],["archive","Archive"],["roster","Players"],["monthly","Monthly"]].map(([v,l])=>(
               <Btn key={v} variant={view===v&&view!=="game"?"gold":"ghost"} style={{flex:1,padding:"6px 4px",fontSize:10,letterSpacing:0.2,textTransform:"uppercase",whiteSpace:"nowrap",textAlign:"center"}} onClick={()=>{setView(v);setSel(null);}}>
                 {l}
               </Btn>
@@ -1519,8 +1685,19 @@ export default function App(){
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:13,fontWeight:700,color:C.textPrimary}}>{p.name}</div>
                             <div style={{fontSize:10,color:C.win,fontWeight:700,letterSpacing:0.5}}>✓ Closed Out · in {fmtMoney(totalIn)}</div>
-                            {(()=>{ const credit=seatCredit(p); if(credit<=0) return null; const owes=credit-(parseFloat(p.cashOut||0)||0);
-                              return <div style={{fontSize:10,fontWeight:700,marginTop:1,color:owes>0.005?"#f59e0b":owes<-0.005?C.win:C.textMuted}}>💳 {owes>0.005?`Owes house ${fmtMoney(owes)}`:owes<-0.005?`House paid ${fmtMoney(-owes)}`:"Credit settled"}</div>;
+                            {(()=>{ const credit=seatCredit(p); if(credit<=0) return null;
+                              const raw=credit-(parseFloat(p.cashOut||0)||0), paid=seatCreditPaid(p), remaining=Math.max(0,raw-paid);
+                              return(
+                                <div style={{marginTop:2,display:"flex",alignItems:"center",gap:7,flexWrap:"wrap",pointerEvents:"auto"}}>
+                                  {raw<-0.005 ? <span style={{fontSize:10,fontWeight:700,color:C.win}}>💳 House paid {fmtMoney(-raw)}</span>
+                                   : remaining>0.005 ? <>
+                                       <span style={{fontSize:10,fontWeight:700,color:"#f59e0b"}}>💳 Owes {fmtMoney(remaining)}{paid>0?` · paid ${fmtMoney(paid)}`:""}</span>
+                                       <button onClick={()=>{ setCreditPay({kind:"seat",gameId:game.id,seatId:p.id,name:p.name,sub:game.name}); setPayAmt(String(remaining)); setPayDate(todayDate()); setPayNote(""); }}
+                                         style={{background:C.goldFaint,color:C.gold,border:`1px solid ${C.goldGlow}`,borderRadius:6,padding:"2px 8px",fontSize:10,fontWeight:800,cursor:"pointer"}}>+ Payment</button>
+                                     </>
+                                   : <span style={{fontSize:10,fontWeight:700,color:C.win}}>💳 Credit settled{paid>0?` · paid ${fmtMoney(paid)}`:""}</span>}
+                                </div>
+                              );
                             })()}
                           </div>
                           {profit!==null&&(
@@ -1570,27 +1747,11 @@ export default function App(){
                               <div style={{marginBottom:12}}>
                                 <div style={{fontSize:10,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:1.5,marginBottom:6}}>Cash-Out Time</div>
                                 <div style={{display:"flex",gap:5}}>
-                                  <select
+                                  <input type="datetime-local"
                                     value={p.cashOutTime||""}
                                     onChange={e=>upSeat(game.id,p.seat,{cashOutTime:e.target.value})}
-                                    style={{flex:1,background:C.surfaceLo,border:`1.5px solid ${C.border}`,borderRadius:8,padding:"9px 7px",color:p.cashOutTime?C.textPrimary:C.textMuted,fontSize:12,outline:"none",boxSizing:"border-box"}}
-                                  >
-                                    <option value="">Select time...</option>
-                                    {(()=>{
-                                      const opts=[];
-                                      const hours=[12,13,14,15,16,17,18,19,20,21,22,23,0,1,2,3,4,5,6,7,8,9,10,11];
-                                      for(const h of hours){
-                                        for(let m=0;m<60;m+=30){
-                                          const hh=String(h).padStart(2,"0"),mm=String(m).padStart(2,"0");
-                                          const label=`${h===0?12:h>12?h-12:h}:${mm} ${h<12?"AM":"PM"}`;
-                                          const d=new Date(); d.setHours(h,m,0,0);
-                                          const iso=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}T${hh}:${mm}`;
-                                          opts.push(<option key={iso} value={iso}>{label}</option>);
-                                        }
-                                      }
-                                      return opts;
-                                    })()}
-                                  </select>
+                                    style={{flex:1,minWidth:0,background:C.surfaceLo,border:`1.5px solid ${C.border}`,borderRadius:8,padding:"9px 9px",color:p.cashOutTime?C.textPrimary:C.textMuted,fontSize:12,outline:"none",boxSizing:"border-box",colorScheme:"dark",fontFamily:"inherit"}}
+                                  />
                                   <button onClick={()=>{
                                     const now=new Date();
                                     const m=Math.round(now.getMinutes()/30)*30;
@@ -1728,7 +1889,7 @@ export default function App(){
                       <span style={{fontSize:12,color:C.textSecondary}}>Food Cost</span>
                       <span style={{fontFamily:"monospace",fontSize:13,fontWeight:700,color:C.loss}}>− {fmtMoney(s.food)}</span>
                     </div>
-                    {(()=>{ const collect=activePlayers.reduce((sum,p)=>sum+Math.max(0,seatCredit(p)-(parseFloat(p.cashOut||0)||0)),0);
+                    {(()=>{ const collect=activePlayers.reduce((sum,p)=>sum+seatRemaining(p),0);
                       if(collect<=0.005) return null;
                       return(
                         <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid rgba(226,181,90,0.12)`}}>
@@ -1781,6 +1942,79 @@ export default function App(){
           </div>
         </div>
       )}
+
+      {/* ══ CREDIT VIEW ══ */}
+      {view==="credit"&&(()=>{
+        const summary=creditSummary();
+        const outstanding=summary.filter(e=>e.totalRemaining>0.005);
+        const grand=outstanding.reduce((a,e)=>a+e.totalRemaining,0);
+        const settledCount=summary.length-outstanding.length;
+        const openManualAdd=()=>{ setAddCredit({}); setAcName(""); setAcPlayerId(null); setAcAmt(""); setAcDate(todayDate()); setAcNote(""); };
+        const line={display:"flex",alignItems:"center",gap:8,padding:"9px 12px",background:C.surfaceLo,borderRadius:9,marginTop:6};
+        return(
+          <div style={{flex:1,padding:"20px 16px",maxWidth:640,margin:"0 auto",width:"100%"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:2}}>Credit Owed</div>
+              <Btn variant="gold" style={{padding:"9px 18px",fontSize:12}} onClick={openManualAdd}>+ Add Credit</Btn>
+            </div>
+            <div style={{background:`linear-gradient(135deg,${C.goldFaint},rgba(226,181,90,0.04))`,border:`1.5px solid ${C.goldGlow}`,borderRadius:14,padding:"14px 18px",marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontSize:10,fontWeight:700,color:C.goldDim,textTransform:"uppercase",letterSpacing:1.5}}>Total Outstanding</div>
+                <div style={{fontSize:10,color:C.textMuted,marginTop:2}}>{outstanding.length} {outstanding.length===1?"player":"players"} owing{settledCount>0?` · ${settledCount} settled`:""}</div>
+              </div>
+              <div style={{fontFamily:"monospace",fontSize:26,fontWeight:900,color:grand>0.005?"#f59e0b":C.win}}>{fmtMoney(grand)}</div>
+            </div>
+            {outstanding.length===0?(
+              <div style={{textAlign:"center",marginTop:60}}>
+                <div style={{fontSize:40,marginBottom:10}}>💳</div>
+                <div style={{fontSize:15,color:C.textSecondary}}>No outstanding credit.</div>
+                <div style={{fontSize:12,color:C.textMuted,marginTop:4}}>Credit from games shows here automatically. Add off-book credit with “+ Add Credit”.</div>
+              </div>
+            ):(
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {outstanding.map(e=>(
+                  <div key={e.key} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,overflow:"hidden"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:11,padding:"12px 14px",borderBottom:`1px solid ${C.border}`}}>
+                      <PhotoCircle photo={e.photo} size={34} fontSize={15}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:14,fontWeight:800,color:C.textPrimary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.name}</div>
+                        <div style={{fontSize:10,color:C.textMuted}}>{e.games.filter(g=>g.remaining>0.005).length+e.manual.filter(m=>m.remaining>0.005).length} open</div>
+                      </div>
+                      <div style={{fontFamily:"monospace",fontWeight:900,fontSize:18,color:"#f59e0b",flexShrink:0}}>{fmtMoney(e.totalRemaining)}</div>
+                    </div>
+                    <div style={{padding:"8px 14px 12px"}}>
+                      {e.games.filter(g=>g.remaining>0.005).map(g=>(
+                        <div key={g.seatId} style={line}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:12,fontWeight:700,color:C.textPrimary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g.gameName}</div>
+                            <div style={{fontSize:9,color:C.textMuted}}>{fmtDate(g.date)} · took {fmtMoney(g.credit)}{g.paid>0?` · paid ${fmtMoney(g.paid)}`:""}</div>
+                          </div>
+                          <span style={{fontFamily:"monospace",fontWeight:800,color:"#f59e0b",fontSize:13}}>{fmtMoney(g.remaining)}</span>
+                          <button onClick={()=>{ setCreditPay({kind:"seat",gameId:g.gameId,seatId:g.seatId,name:e.name,sub:g.gameName}); setPayAmt(String(g.remaining)); setPayDate(todayDate()); setPayNote(""); }}
+                            style={{flexShrink:0,background:C.win,color:"#000",border:"none",borderRadius:7,padding:"6px 11px",fontWeight:800,fontSize:11,cursor:"pointer"}}>Pay</button>
+                        </div>
+                      ))}
+                      {e.manual.filter(m=>m.remaining>0.005).map(m=>(
+                        <div key={m.id} style={line}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:12,fontWeight:700,color:C.textPrimary}}>Manual credit{m.note?` · ${m.note}`:""}</div>
+                            <div style={{fontSize:9,color:C.textMuted}}>{fmtDate(m.date)} · {fmtMoney(m.amount)}{m.paid>0?` · paid ${fmtMoney(m.paid)}`:""}</div>
+                          </div>
+                          <span style={{fontFamily:"monospace",fontWeight:800,color:"#f59e0b",fontSize:13}}>{fmtMoney(m.remaining)}</span>
+                          <button onClick={()=>{ setCreditPay({kind:"manual",entryId:m.id,name:e.name,sub:m.note||"Manual credit"}); setPayAmt(String(m.remaining)); setPayDate(todayDate()); setPayNote(""); }}
+                            style={{flexShrink:0,background:C.win,color:"#000",border:"none",borderRadius:7,padding:"6px 11px",fontWeight:800,fontSize:11,cursor:"pointer"}}>Pay</button>
+                          <button onClick={()=>{ if(confirm("Delete this manual credit entry?")) removeManualCredit(m.id); }}
+                            style={{flexShrink:0,background:"none",border:"none",color:C.textMuted,fontSize:15,cursor:"pointer"}}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ══ ARCHIVE VIEW ══ */}
       {view==="archive"&&(
