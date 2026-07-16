@@ -144,6 +144,36 @@ const seatRemaining = s => Math.max(0, seatOwed(s) - seatCreditPaid(s));        
 const manualPaid    = c => (c.payments||[]).reduce((a,p)=>a+(parseFloat(p.amount||0)||0),0);
 const manualRemaining = c => Math.max(0, (parseFloat(c.amount||0)||0) - manualPaid(c));
 
+// A player can sit down several times in one night (cash out, then buy back in).
+// Results views show ONE combined line per player: buy-ins and cash-outs are summed,
+// and hours/points are summed per sit-down (never the span) so breaks aren't counted.
+// `_n` = number of sit-downs merged. Used for display only — the raw seats are untouched.
+const mergeSeatsByPlayer = list => {
+  const by=new Map();
+  list.forEach(s=>{
+    const key=s.playerId||(s.name||"").trim().toLowerCase();
+    const hrs=calcHours(s.loginTime,s.cashOutTime)||0;
+    const pts=hrs?calcPoints(hrs):0;
+    const cur=by.get(key);
+    if(!cur){
+      by.set(key,{...s,_n:1,_hours:hrs,_points:pts,
+        rebuys:[...(s.rebuys||[])],rebuyStatuses:[...(s.rebuyStatuses||[])],creditPayments:[...(s.creditPayments||[])]});
+      return;
+    }
+    cur._n++; cur._hours+=hrs; cur._points+=pts;
+    cur.buyIn=String((parseFloat(cur.buyIn||0)||0)+(parseFloat(s.buyIn||0)||0));
+    cur.rebuys=[...cur.rebuys,...(s.rebuys||[])];
+    cur.rebuyStatuses=[...cur.rebuyStatuses,...(s.rebuyStatuses||[])];
+    const anyOut=(cur.cashOut!==""&&cur.cashOut!=null)||(s.cashOut!==""&&s.cashOut!=null);
+    cur.cashOut=anyOut?String((parseFloat(cur.cashOut||0)||0)+(parseFloat(s.cashOut||0)||0)):"";
+    cur.creditPayments=[...cur.creditPayments,...(s.creditPayments||[])];
+    if(s.loginTime&&(!cur.loginTime||s.loginTime<cur.loginTime)) cur.loginTime=s.loginTime;
+    if(s.cashOutTime&&(!cur.cashOutTime||s.cashOutTime>cur.cashOutTime)) cur.cashOutTime=s.cashOutTime;
+    if(!cur.photo&&s.photo) cur.photo=s.photo;
+  });
+  return [...by.values()];
+};
+
 const SK = "bluffhouse_v6";
 function load(){
   try{ const r=localStorage.getItem(SK); if(r) return JSON.parse(r); } catch(_){}
@@ -1044,7 +1074,7 @@ export default function App(){
                             <div style={{fontSize:10,color:C.gold,fontWeight:700,marginTop:4,textTransform:"uppercase",letterSpacing:1}}>
                               {typeLabels[g.gameType]||"1/3 No Limit"}
                             </div>
-                            <div style={{fontSize:11,color:C.textSecondary,marginTop:3}}>{s.active.length} player{s.active.length!==1?"s":""} · <span style={{color:C.gold,fontFamily:"monospace"}}>{fmtMoney(s.ti)}</span> in</div>
+                            <div style={{fontSize:11,color:C.textSecondary,marginTop:3}}>{mergeSeatsByPlayer(s.active).length} player{mergeSeatsByPlayer(s.active).length!==1?"s":""} · <span style={{color:C.gold,fontFamily:"monospace"}}>{fmtMoney(s.ti)}</span> in</div>
                           </div>
                           <div style={{display:"flex",gap:8,alignItems:"center"}}>
                             <Btn variant="ghost" style={{padding:"4px 9px",fontSize:12,color:C.textMuted}} onClick={e=>{e.stopPropagation();setDelId(g.id);}}>✕</Btn>
@@ -1541,10 +1571,10 @@ export default function App(){
           )}
 
           {/* ── LEDGER tab ── */}
-          {sub==="ledger"&&(()=>{const s=gStats(game); return(
+          {sub==="ledger"&&(()=>{const s=gStats(game); const rows=mergeSeatsByPlayer(s.active); return(
             <div style={{flex:1,padding:"16px",maxWidth:760,margin:"0 auto",width:"100%"}}>
               <div style={{fontSize:15,fontWeight:800,color:C.textPrimary,marginBottom:4}}>{game.name||"Poker Night"}</div>
-              <div style={{fontSize:11,color:C.textSecondary,marginBottom:16}}>{fmtDate(game.date)} · {s.active.length} players</div>
+              <div style={{fontSize:11,color:C.textSecondary,marginBottom:16}}>{fmtDate(game.date)} · {rows.length} player{rows.length!==1?"s":""}</div>
               <div style={{overflowX:"auto",background:C.surface,borderRadius:12,border:`1px solid ${C.border}`}}>
                 <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                   <thead>
@@ -1555,9 +1585,9 @@ export default function App(){
                     </tr>
                   </thead>
                   <tbody>
-                    {s.active.map((p,ri)=>{
+                    {rows.map((p,ri)=>{
                       const ti=parseFloat(p.buyIn||0)+(p.rebuys||[]).reduce((a,r)=>a+parseFloat(r||0),0);
-                      const co=parseFloat(p.cashOut||0), profit=p.cashOut?co-ti:null, hrs=calcHours(p.loginTime,p.cashOutTime), pts=hrs?calcPoints(hrs):null;
+                      const co=parseFloat(p.cashOut||0), profit=p.cashOut?co-ti:null, hrs=p._hours||null, pts=p._points||null;
                       return(
                         <tr key={p.id} style={{borderBottom:`1px solid ${C.border}`,background:ri%2===0?"transparent":C.surfaceLo}}>
                           <td style={{padding:"11px 10px"}}>
@@ -1565,7 +1595,7 @@ export default function App(){
                               <span style={{flexShrink:0,display:"inline-flex"}}><PhotoCircle photo={p.photo} size={24} fontSize={12}/></span>
                               <div>
                                 <div style={{fontWeight:700,color:C.textPrimary,fontSize:13}}>{p.name}</div>
-                                <div style={{fontSize:9,color:C.textMuted}}>S{p.seat}{p.loginTime?` · ${fmtTime(p.loginTime)}`:""}{p.cashOutTime?` → ${fmtTime(p.cashOutTime)}`:""}</div>
+                                <div style={{fontSize:9,color:C.textMuted}}>{p._n>1?`${p._n} sit-downs`:`S${p.seat}`}{p.loginTime?` · ${fmtTime(p.loginTime)}`:""}{p.cashOutTime?` → ${fmtTime(p.cashOutTime)}`:""}</div>
                               </div>
                             </div>
                           </td>
@@ -1659,6 +1689,13 @@ export default function App(){
               const pa=pProfit(a),pb=pProfit(b);
               if(pa===null&&pb===null)return 0; if(pa===null)return 1; if(pb===null)return -1; return pb-pa;
             });
+            // Results are per player (a player may have several sit-downs); the cash-out
+            // list below stays per sit-down since each one is closed out individually.
+            const merged=mergeSeatsByPlayer(activePlayers);
+            const ranked=[...merged].sort((a,b)=>{
+              const pa=pProfit(a),pb=pProfit(b);
+              if(pa===null&&pb===null)return 0; if(pa===null)return 1; if(pb===null)return -1; return pb-pa;
+            });
             return(
               <div style={{flex:1,padding:"20px 16px",maxWidth:580,margin:"0 auto",width:"100%"}}>
                 <div style={{marginBottom:20}}>
@@ -1668,7 +1705,7 @@ export default function App(){
                 <div style={{background:C.surface,borderRadius:14,overflow:"hidden",border:`1px solid ${C.border}`,marginBottom:16}}>
                   <div style={{padding:"11px 18px",background:C.surfaceHi,borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between"}}>
                     <span style={{fontSize:9,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:1.8}}>Player Cash-Out</span>
-                    <span style={{fontSize:9,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:1.8}}>{activePlayers.length} Players</span>
+                    <span style={{fontSize:9,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:1.8}}>{merged.length} Player{merged.length!==1?"s":""}{activePlayers.length!==merged.length?` · ${activePlayers.length} sit-downs`:""}</span>
                   </div>
                   {activePlayers.length===0?(
                     <div style={{padding:"32px 18px",textAlign:"center",color:C.textMuted,fontSize:12}}>No players yet.</div>
@@ -1853,19 +1890,22 @@ export default function App(){
                     })
                   )}
                 </div>
-                {sorted.some(p=>pProfit(p)!==null)&&(
+                {ranked.some(p=>pProfit(p)!==null)&&(
                   <div style={{background:C.surface,borderRadius:14,overflow:"hidden",border:`1px solid ${C.border}`,marginBottom:16}}>
                     <div style={{padding:"11px 18px",background:C.surfaceHi,borderBottom:`1px solid ${C.border}`}}>
                       <span style={{fontSize:9,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:1.8}}>Final Rankings</span>
                     </div>
-                    {sorted.filter(p=>pProfit(p)!==null).map((p,i)=>{
+                    {ranked.filter(p=>pProfit(p)!==null).map((p,i)=>{
                       const profit=pProfit(p),win=profit>=0;
                       const medals=["🥇","🥈","🥉"];
                       return(
-                        <div key={p.id} style={{display:"flex",alignItems:"center",padding:"12px 18px",borderBottom:i<sorted.filter(x=>pProfit(x)!==null).length-1?`1px solid ${C.border}`:"none"}}>
+                        <div key={p.id} style={{display:"flex",alignItems:"center",padding:"12px 18px",borderBottom:i<ranked.filter(x=>pProfit(x)!==null).length-1?`1px solid ${C.border}`:"none"}}>
                           <div style={{fontSize:i<3?18:12,width:28,textAlign:"center",marginRight:10,flexShrink:0,color:i>=3?C.textMuted:undefined,fontWeight:700}}>{i<3?medals[i]:`#${i+1}`}</div>
                           <span style={{marginRight:6,flexShrink:0,display:"inline-flex"}}><PhotoCircle photo={p.photo} size={24} fontSize={12}/></span>
-                          <div style={{flex:1,fontSize:14,fontWeight:700,color:C.textPrimary}}>{p.name}</div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:14,fontWeight:700,color:C.textPrimary}}>{p.name}</div>
+                            {p._n>1&&<div style={{fontSize:9,color:C.textMuted}}>{p._n} sit-downs combined</div>}
+                          </div>
                           <div style={{fontSize:20,fontWeight:900,fontFamily:"monospace",color:win?C.win:C.loss}}>{win?"+":""}{fmtMoney(profit)}</div>
                         </div>
                       );
@@ -2038,7 +2078,7 @@ export default function App(){
                 const s=gStats(g);
                 const finalProfit=(s.ti-s.co)-s.deal-s.food;
                 const gameTypeLabels={"1-3-nl":"1/3 NL","2-5-nl":"2/5 NL","5-10-nl":"5/10 NL","roe-5":"ROE 5"};
-                const archPlayers=seatedAll(g);
+                const archPlayers=mergeSeatsByPlayer(seatedAll(g));   // one line per player
                 const closedPlayers=archPlayers.filter(x=>x.seatClosed).length;
                 const totalPlayers=archPlayers.length;
                 return(
@@ -2065,7 +2105,7 @@ export default function App(){
                       }).map((p,pi)=>{
                         const totalIn=parseFloat(p.buyIn||0)+(p.rebuys||[]).reduce((s,r)=>s+parseFloat(r||0),0);
                         const profit=p.cashOut?parseFloat(p.cashOut)-totalIn:null;
-                        const hrs=calcHours(p.loginTime,p.cashOutTime);
+                        const hrs=p._hours||null;
                         const medals=["🥇","🥈","🥉"];
                         return(
                           <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:pi<archPlayers.length-1?`1px solid ${C.border}`:"none"}}>
@@ -2073,7 +2113,10 @@ export default function App(){
                             <PhotoCircle photo={p.photo} size={28} fontSize={13}/>
                             <div style={{flex:1,minWidth:0}}>
                               <div style={{fontSize:12,fontWeight:700,color:C.textPrimary,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
-                              {hrs&&<div style={{fontSize:9,color:C.blue}}>⏱ {fmtH(hrs)}</div>}
+                              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                                {hrs&&<span style={{fontSize:9,color:C.blue}}>⏱ {fmtH(hrs)}</span>}
+                                {p._n>1&&<span style={{fontSize:9,color:C.textMuted}}>· {p._n} sit-downs</span>}
+                              </div>
                             </div>
                             <div style={{textAlign:"right",flexShrink:0}}>
                               {profit!==null?(
@@ -2145,7 +2188,7 @@ export default function App(){
                       style={{background:C.surface,borderRadius:9,padding:"11px 14px",border:`1px solid ${C.border}`,cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <div>
                         <div style={{fontSize:12,fontWeight:700,color:C.textPrimary}}>{g.name||"Poker Night"} <span style={{color:C.gold}}>·</span> {fmtDate(g.date)}</div>
-                        <div style={{fontSize:10,color:C.textSecondary,marginTop:2}}>{s.active.length} players · {fmtMoney(s.ti)} in play</div>
+                        <div style={{fontSize:10,color:C.textSecondary,marginTop:2}}>{mergeSeatsByPlayer(s.active).length} players · {fmtMoney(s.ti)} in play</div>
                       </div>
                       <div style={{textAlign:"right"}}>
                         <div style={{fontSize:11,fontWeight:700,color:C.gold,fontFamily:"monospace"}}>Profit: {fmtMoney((s.ti-s.co)-s.deal-s.food,true)}</div>
