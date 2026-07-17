@@ -2031,7 +2031,7 @@ export default function App(){
                           </div>
                           <span style={{fontFamily:"monospace",fontWeight:800,color:"#f59e0b",fontSize:13}}>{fmtMoney(g.remaining)}</span>
                           <button onClick={()=>{ setCreditPay({kind:"seat",gameId:g.gameId,seatId:g.seatId,name:e.name,sub:g.gameName}); setPayAmt(String(g.remaining)); setPayDate(todayDate()); setPayNote(""); }}
-                            style={{flexShrink:0,background:C.win,color:"#000",border:"none",borderRadius:7,padding:"6px 11px",fontWeight:800,fontSize:11,cursor:"pointer"}}>Pay</button>
+                            style={{flexShrink:0,background:C.win,color:"#000",border:"none",borderRadius:7,padding:"6px 11px",fontWeight:800,fontSize:11,cursor:"pointer"}}>Collect</button>
                         </div>
                       ))}
                       {e.manual.filter(m=>m.remaining>0.005).map(m=>(
@@ -2042,7 +2042,7 @@ export default function App(){
                           </div>
                           <span style={{fontFamily:"monospace",fontWeight:800,color:"#f59e0b",fontSize:13}}>{fmtMoney(m.remaining)}</span>
                           <button onClick={()=>{ setCreditPay({kind:"manual",entryId:m.id,name:e.name,sub:m.note||"Manual credit"}); setPayAmt(String(m.remaining)); setPayDate(todayDate()); setPayNote(""); }}
-                            style={{flexShrink:0,background:C.win,color:"#000",border:"none",borderRadius:7,padding:"6px 11px",fontWeight:800,fontSize:11,cursor:"pointer"}}>Pay</button>
+                            style={{flexShrink:0,background:C.win,color:"#000",border:"none",borderRadius:7,padding:"6px 11px",fontWeight:800,fontSize:11,cursor:"pointer"}}>Collect</button>
                           <button onClick={()=>{ if(confirm("Delete this manual credit entry?")) removeManualCredit(m.id); }}
                             style={{flexShrink:0,background:"none",border:"none",color:C.textMuted,fontSize:15,cursor:"pointer"}}>×</button>
                         </div>
