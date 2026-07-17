@@ -301,6 +301,7 @@ export default function App(){
   const [addCredit,setAddCredit]   = useState(null);      // {} → add-manual-credit modal open
   const [acName,setAcName]         = useState("");
   const [acPlayerId,setAcPlayerId] = useState(null);
+  const [acSuggest,setAcSuggest]   = useState(false);   // add-credit player suggestions open
   const [acAmt,setAcAmt]           = useState("");
   const [acDate,setAcDate]         = useState("");
   const [acNote,setAcNote]         = useState("");
@@ -836,8 +837,9 @@ export default function App(){
         const inp={width:"100%",background:C.surfaceLo,border:`1.5px solid ${C.border}`,borderRadius:9,padding:"10px 12px",color:C.textPrimary,fontSize:14,fontWeight:600,outline:"none",boxSizing:"border-box",fontFamily:"inherit",colorScheme:"dark"};
         const nm=acName.trim(), amt=parseFloat(acAmt||0)||0, valid=nm&&amt>0;
         const submit=()=>{ if(!valid) return;
-          const match=data.players.find(p=>p.name.trim().toLowerCase()===nm.toLowerCase());
-          addManualCredit({id:uid(),playerId:match?match.id:null,name:nm,amount:String(amt),date:acDate||todayDate(),note:acNote.trim(),payments:[]});
+          const selected=acPlayerId&&data.players.find(p=>p.id===acPlayerId&&p.name.trim().toLowerCase()===nm.toLowerCase());
+          const match=selected||data.players.find(p=>p.name.trim().toLowerCase()===nm.toLowerCase());
+          addManualCredit({id:uid(),playerId:match?match.id:null,name:match?match.name.trim():nm,amount:String(amt),date:acDate||todayDate(),note:acNote.trim(),payments:[]});
           setAddCredit(null); };
         const roster=[...data.players].filter(p=>p.name).sort((a,b)=>a.name.localeCompare(b.name));
         return(
@@ -849,8 +851,43 @@ export default function App(){
               </div>
               <div style={{padding:"14px 18px"}}>
                 <div style={{fontSize:9,fontWeight:700,color:C.textMuted,textTransform:"uppercase",letterSpacing:1.5,marginBottom:6}}>Player</div>
-                <input list="ac-roster" value={acName} onChange={e=>setAcName(e.target.value)} placeholder="Name (existing or new)" style={{...inp,marginBottom:12}}/>
-                <datalist id="ac-roster">{roster.map(p=><option key={p.id} value={p.name}/>)}</datalist>
+                <div style={{position:"relative",marginBottom:12}}>
+                  <input value={acName}
+                    onChange={e=>{ setAcName(e.target.value); setAcPlayerId(null); setAcSuggest(true); }}
+                    onFocus={()=>setAcSuggest(true)}
+                    onBlur={()=>setTimeout(()=>setAcSuggest(false),150)}
+                    placeholder="Type a name or select a player…" autoComplete="off" style={inp}/>
+                  {acSuggest&&acName.trim()&&(()=>{
+                    const q=acName.toLowerCase().trim();
+                    const matches=roster.filter(p=>p.name.toLowerCase().includes(q)).slice(0,6);
+                    if(!matches.length) return null;
+                    return(
+                      <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:"#1c1c1c",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",boxShadow:"0 8px 30px rgba(0,0,0,0.6)",marginTop:4,maxHeight:260,overflowY:"auto"}}>
+                        {matches.map(p=>{
+                          const pStats=playerLifetimeStats(p.id);
+                          return(
+                            <div key={p.id}
+                              onMouseDown={()=>{ setAcName(p.name); setAcPlayerId(p.id); setAcSuggest(false); }}
+                              style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer",borderBottom:`1px solid ${C.border}`,background:"transparent"}}
+                              onMouseEnter={e=>e.currentTarget.style.background="#252525"}
+                              onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                              <PhotoCircle photo={p.photo} size={34} fontSize={16}/>
+                              <div style={{flex:1,minWidth:0}}>
+                                <div style={{fontSize:13,fontWeight:700,color:C.textPrimary}}>{p.name}</div>
+                                <div style={{fontSize:10,color:C.textSecondary,marginTop:1}}>
+                                  {p.phone&&<span>📞 {p.phone} · </span>}
+                                  <span style={{color:pColor(pStats.profit)}}>{fmtMoney(pStats.profit,true)} career</span>
+                                  {" · "}<span style={{color:C.gold}}>{pStats.points} pts</span>
+                                </div>
+                              </div>
+                              <div style={{fontSize:10,color:C.textMuted,fontWeight:600,background:C.surfaceHi,borderRadius:5,padding:"2px 8px",flexShrink:0}}>Select</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
                 <div style={{display:"flex",gap:8,marginBottom:12}}>
                   <div style={{position:"relative",flex:1}}>
                     <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:C.gold,fontWeight:700,fontSize:14,pointerEvents:"none"}}>$</span>
@@ -1989,7 +2026,7 @@ export default function App(){
         const outstanding=summary.filter(e=>e.totalRemaining>0.005);
         const grand=outstanding.reduce((a,e)=>a+e.totalRemaining,0);
         const settledCount=summary.length-outstanding.length;
-        const openManualAdd=()=>{ setAddCredit({}); setAcName(""); setAcPlayerId(null); setAcAmt(""); setAcDate(todayDate()); setAcNote(""); };
+        const openManualAdd=()=>{ setAddCredit({}); setAcName(""); setAcPlayerId(null); setAcSuggest(false); setAcAmt(""); setAcDate(todayDate()); setAcNote(""); };
         const line={display:"flex",alignItems:"center",gap:8,padding:"9px 12px",background:C.surfaceLo,borderRadius:9,marginTop:6};
         return(
           <div style={{flex:1,padding:"20px 16px",maxWidth:640,margin:"0 auto",width:"100%"}}>
