@@ -5,14 +5,13 @@ export default defineConfig({
   plugins: [react()],
   // Local dev convenience: proxy the shared-state API to the deployed Netlify function
   // so `npm run dev` exercises the real backend.
-  // NOTE: proxy temporarily disabled for isolated local testing — RE-ENABLE before deploy.
-  // server: {
-  //   proxy: {
-  //     "/api": {
-  //       target: "https://bluff-house-social.netlify.app",
-  //       changeOrigin: true,
-  //       secure: true,
-  //     },
-  //   },
-  // },
+  server: {
+    proxy: {
+      "/api": {
+        target: "https://bluff-house-social.netlify.app",
+        changeOrigin: true,
+        secure: true,
+      },
+    },
+  },
 });
